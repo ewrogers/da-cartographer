@@ -3,7 +3,7 @@
 A community map editor for Dark Ages. Open and paint isometric maps, save
 reusable pieces as prefabs, and export your work as a PNG.
 
-![DA Cartographer showing a Dark Ages map](screenshot.png)
+![DA Cartographer on macOS showing Mileth Village and the tile palette](screenshot.png)
 
 ## Get started
 
