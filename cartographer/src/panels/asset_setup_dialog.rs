@@ -3,8 +3,6 @@ use eframe::egui;
 use crate::theme::theme_colors;
 use crate::widgets::icons;
 
-const ASSET_SETUP_ICON: &str = "\u{EB02}";
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssetSetupDialogAction {
     None,
@@ -76,7 +74,7 @@ impl AssetSetupDialog {
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
-                draw_modal_title(ui, &colors, ASSET_SETUP_ICON, "Asset Setup");
+                icons::dialog_title(ui, colors.text, icons::draw_icon_open, "Asset Setup");
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(
@@ -148,26 +146,4 @@ impl AssetSetupDialog {
         self.open = open;
         action
     }
-}
-
-fn draw_modal_title(
-    ui: &mut egui::Ui,
-    colors: &crate::theme::ThemeColors,
-    icon: &str,
-    title: &str,
-) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        ui.label(
-            egui::RichText::new(icon)
-                .font(icons::symbol_icon_font_id(18.0))
-                .color(colors.text),
-        );
-        ui.label(
-            egui::RichText::new(title)
-                .size(18.0)
-                .strong()
-                .color(colors.text),
-        );
-    });
 }

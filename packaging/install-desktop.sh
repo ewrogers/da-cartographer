@@ -8,6 +8,9 @@ app_id=org.dacartographer.Cartographer
 
 mkdir -p "$app_dir" "$data_home/applications" "$data_home/icons/hicolor/512x512/apps"
 install -m 755 "$release_dir/cartographer" "$app_dir/cartographer"
+if [ -f "$release_dir/LICENSE-Tabler.txt" ]; then
+    install -m 644 "$release_dir/LICENSE-Tabler.txt" "$app_dir/"
+fi
 if [ ! -e "$app_dir/maps.ron" ]; then
     install -m 644 "$release_dir/maps.ron" "$app_dir/maps.ron"
 fi

@@ -48,6 +48,9 @@ preview, and place saved pieces. The library also lets you import a prefab
 underlying map show through when you place it. Prefabs live in the
 app's `prefabs` folder.
 
+Right-click a tab to close it, close the other tabs, or close tabs to its right.
+The editor prompts before closing a tab with unsaved edits.
+
 ## Export an image
 
 Choose **Export** to save a PNG. Pick the scale and leave the background

@@ -38,7 +38,7 @@ use crate::tile_animation::TileAnimationTable;
 const SELECTION_CLIPBOARD_SENTINEL: &str = "__cartographer_selection__";
 
 enum PendingDiscardAction {
-    CloseTab { index: usize },
+    CloseTabs { remaining: Vec<usize> },
     CloseWindow { remaining_docs: Vec<usize> },
 }
 
@@ -61,6 +61,8 @@ struct PendingPrefabCreation {
 }
 
 struct LoadedAssets {
+    ground_image: Option<egui::ColorImage>,
+    wall_image: Option<egui::ColorImage>,
     tile_atlas: Option<render::TileAtlas>,
     wall_atlas: Option<render::SpriteAtlas>,
     sotp_data: Option<Vec<u8>>,
@@ -174,8 +176,8 @@ pub struct EditorApp {
     prefab_rename_should_focus: bool,
     allow_window_close: bool,
     status_message: String,
-    atlas_needs_upload: bool,
-    wall_atlas_needs_upload: bool,
+    ground_image: Option<egui::ColorImage>,
+    wall_image: Option<egui::ColorImage>,
     tab_overlay_texture_needs_upload: bool,
 }
 
@@ -185,7 +187,6 @@ impl EditorApp {
         icon: Option<&egui::IconData>,
         bundled_maps: Option<&Path>,
     ) -> Self {
-        crate::widgets::icons::install_font(&cc.egui_ctx);
         theme::apply_theme(&cc.egui_ctx);
         let title_icon = icon.map(|icon| {
             cc.egui_ctx.load_texture(
@@ -216,8 +217,8 @@ impl EditorApp {
             layer_visibility: LayerVisibility::default(),
             show_grid: true,
             show_collision_overlay: false,
-            atlas_needs_upload: false,
-            wall_atlas_needs_upload: false,
+            ground_image: None,
+            wall_image: None,
             tile_atlas: None,
             wall_atlas: None,
             sotp_data: None,
@@ -573,7 +574,15 @@ impl EditorApp {
             warn!("SOTP.DAT not found in asset archives");
         }
 
+        let ground_image = tile_atlas
+            .as_ref()
+            .map(|atlas| Self::prepare_image(atlas.dimensions(), atlas.pixels()));
+        let wall_image = wall_atlas
+            .as_ref()
+            .map(|atlas| Self::prepare_image(atlas.dimensions(), atlas.pixels()));
         Ok(LoadedAssets {
+            ground_image,
+            wall_image,
             tile_atlas,
             wall_atlas,
             sotp_data,
@@ -682,8 +691,8 @@ impl EditorApp {
     }
 
     fn apply_loaded_assets(&mut self, assets: LoadedAssets) {
-        self.atlas_needs_upload = assets.tile_atlas.is_some();
-        self.wall_atlas_needs_upload = assets.wall_atlas.is_some();
+        self.ground_image = assets.ground_image;
+        self.wall_image = assets.wall_image;
         self.tile_atlas = assets.tile_atlas.map(Arc::new);
         self.wall_atlas = assets.wall_atlas.map(Arc::new);
         self.sotp_data = assets.sotp_data;
@@ -851,7 +860,7 @@ impl EditorApp {
                     }
                 }
             }
-            ctx.request_repaint();
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
 
         let Some(result) = completion else {
@@ -1123,67 +1132,36 @@ impl EditorApp {
     }
 
     /// Upload the tile atlas texture to the GPU on the first frame.
-    fn try_upload_atlas(&mut self, ctx: &egui::Context) {
-        if !self.atlas_needs_upload {
-            return;
-        }
-        self.atlas_needs_upload = false;
-
-        let atlas = match &self.tile_atlas {
-            Some(a) => a,
-            None => return,
-        };
-
-        let (w, h) = atlas.dimensions();
-        let max_side = ctx.input(|i| i.max_texture_side);
-
-        if w as usize > max_side || h as usize > max_side {
-            warn!(
-                "Tile atlas {}x{} exceeds GPU max texture size {}; tiles will not render",
-                w, h, max_side
-            );
-            return;
-        }
-
-        let texture = ctx.load_texture(
-            "tile_atlas",
-            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], atlas.pixels()),
-            egui::TextureOptions::NEAREST,
-        );
-        info!("Uploaded tile atlas texture to GPU (max_side={})", max_side);
-        self.atlas_texture = Some(texture);
+    fn prepare_image((width, height): (u32, u32), pixels: &[u8]) -> egui::ColorImage {
+        egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], pixels)
     }
 
-    /// Upload the wall sprite atlas texture to the GPU on the first frame.
-    fn try_upload_wall_atlas(&mut self, ctx: &egui::Context) {
-        if !self.wall_atlas_needs_upload {
+    fn upload_next_atlas(&mut self, ctx: &egui::Context) {
+        if ctx.input(|input| input.pointer.any_down()) {
+            if self.ground_image.is_some() || self.wall_image.is_some() {
+                ctx.request_repaint_after(Duration::from_millis(16));
+            }
             return;
         }
-        self.wall_atlas_needs_upload = false;
-
-        let atlas = match &self.wall_atlas {
-            Some(a) => a,
-            None => return,
+        let (name, image, texture) = if let Some(image) = self.ground_image.take() {
+            ("tile_atlas", image, &mut self.atlas_texture)
+        } else if let Some(image) = self.wall_image.take() {
+            ("wall_atlas", image, &mut self.wall_texture)
+        } else {
+            return;
         };
-
-        let (w, h) = atlas.dimensions();
-        let max_side = ctx.input(|i| i.max_texture_side);
-
-        if w as usize > max_side || h as usize > max_side {
-            warn!(
-                "Wall atlas {}x{} exceeds GPU max texture size {}; walls will not render",
-                w, h, max_side
-            );
-            return;
+        if image
+            .size
+            .into_iter()
+            .any(|side| side > ctx.input(|input| input.max_texture_side))
+        {
+            warn!(atlas = name, "Atlas exceeds GPU texture limits");
+        } else {
+            *texture = Some(ctx.load_texture(name, image, egui::TextureOptions::NEAREST));
         }
-
-        let texture = ctx.load_texture(
-            "wall_atlas",
-            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], atlas.pixels()),
-            egui::TextureOptions::NEAREST,
-        );
-        info!("Uploaded wall sprite atlas texture to GPU");
-        self.wall_texture = Some(texture);
+        if self.wall_image.is_some() {
+            ctx.request_repaint();
+        }
     }
 
     /// Upload a tiny repeating checker texture used for tab collision overlay fill.
@@ -1854,15 +1832,28 @@ impl EditorApp {
     }
 
     fn close_tab(&mut self, index: usize) {
-        if self.pending_unsaved_changes.is_some() || index >= self.documents.len() {
+        self.close_tabs(vec![index]);
+    }
+
+    fn close_tabs(&mut self, mut remaining: Vec<usize>) {
+        if self.pending_unsaved_changes.is_some() {
             return;
         }
-        self.documents[index].finish_stroke();
-        if self.documents[index].is_dirty() {
-            self.begin_unsaved_changes_flow(PendingDiscardAction::CloseTab { index }, index);
-            return;
+        // Close highest indices first so pending indices stay valid.
+        while let Some(index) = remaining.pop() {
+            let Some(doc) = self.documents.get_mut(index) else {
+                continue;
+            };
+            doc.finish_stroke();
+            if doc.is_dirty() {
+                self.begin_unsaved_changes_flow(
+                    PendingDiscardAction::CloseTabs { remaining },
+                    index,
+                );
+                return;
+            }
+            self.close_tab_now(index);
         }
-        self.close_tab_now(index);
     }
 
     fn close_tab_now(&mut self, index: usize) {
@@ -1967,8 +1958,9 @@ impl EditorApp {
         pending: PendingUnsavedChanges,
     ) {
         match pending.action {
-            PendingDiscardAction::CloseTab { index } => {
-                self.close_tab_now(index);
+            PendingDiscardAction::CloseTabs { remaining } => {
+                self.close_tab_now(pending.document_index);
+                self.close_tabs(remaining);
             }
             PendingDiscardAction::CloseWindow { mut remaining_docs } => {
                 remaining_docs.retain(|&index| index != pending.document_index);
@@ -1986,19 +1978,21 @@ impl EditorApp {
     }
 
     fn undo_active_document(&mut self) {
-        let doc = &mut self.documents[self.active_tab];
-        if doc.undo() {
-            self.selection_drag_start_tile = None;
-            self.selection_drag_mode = None;
+        if self.selection_drag_mode.is_some() {
+            self.clear_active_selection();
+        }
+        self.clear_edit_anchors();
+        if self.documents[self.active_tab].undo() {
             self.status_message = "Undo".to_string();
         }
     }
 
     fn redo_active_document(&mut self) {
-        let doc = &mut self.documents[self.active_tab];
-        if doc.redo() {
-            self.selection_drag_start_tile = None;
-            self.selection_drag_mode = None;
+        if self.selection_drag_mode.is_some() {
+            self.clear_active_selection();
+        }
+        self.clear_edit_anchors();
+        if self.documents[self.active_tab].redo() {
             self.status_message = "Redo".to_string();
         }
     }
@@ -2460,8 +2454,7 @@ impl eframe::App for EditorApp {
         }
 
         // Deferred atlas uploads
-        self.try_upload_atlas(ctx);
-        self.try_upload_wall_atlas(ctx);
+        self.upload_next_atlas(ctx);
         self.try_upload_tab_overlay_texture(ctx);
 
         let close_requested = ctx.input(|i| i.viewport().close_requested());
@@ -2491,6 +2484,16 @@ impl eframe::App for EditorApp {
         let tab_action = self.tab_bar.show(ctx, &self.documents, self.active_tab);
         match tab_action {
             TabBarAction::CloseTab(i) => self.close_tab(i),
+            TabBarAction::CloseOthers(i) => {
+                self.close_tabs(
+                    (0..self.documents.len())
+                        .filter(|&index| index != i)
+                        .collect(),
+                );
+            }
+            TabBarAction::CloseRight(i) => {
+                self.close_tabs((i + 1..self.documents.len()).collect());
+            }
             TabBarAction::SwitchTab(i) => {
                 self.documents[self.active_tab].finish_stroke();
                 self.active_tab = i;

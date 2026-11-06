@@ -19,7 +19,6 @@ const TAB_MAP_ROW_HEIGHT_OPEN: f32 = 22.0;
 const TAB_MAP_ROW_HEIGHT_COLLAPSED: f32 = 18.0;
 const TAB_MAP_BORDER_PAD_OPEN: f32 = 10.0;
 const TAB_MAP_BORDER_PAD_COLLAPSED: f32 = 4.0;
-const TAB_MAP_LABEL_NUDGE_Y: f32 = 1.0;
 const PREFAB_LIST_HEADER_HEIGHT: f32 = 24.0;
 const PREFAB_LIST_ROW_HEIGHT: f32 = 28.0;
 const PREFAB_LIST_CELL_PAD_X: f32 = 10.0;
@@ -32,10 +31,6 @@ const PREFAB_PREVIEW_HEIGHT_ID: &str = "inspector_prefab_preview_height";
 const PREFAB_PREVIEW_HEADER_HEIGHT: f32 = 20.0;
 const PREFAB_PREVIEW_TOP_PAD: f32 = 4.0;
 const PREFAB_PREVIEW_BOTTOM_PAD: f32 = 44.0;
-const PREFAB_SECTION_ICON: &str = "\u{E5D8}";
-const TILE_PALETTE_SECTION_ICON: &str = "\u{E2A1}";
-const PREFAB_EDIT_ICON: &str = "\u{270E}";
-const PREFAB_SEARCH_ICON: &str = "\u{1F50D}";
 
 #[derive(Default)]
 pub struct InspectorResponse {
@@ -232,7 +227,7 @@ impl InspectorPanel {
         );
 
         if prefab_mode {
-            Self::section_header(ui, colors, "Prefabs", Some(PREFAB_SECTION_ICON));
+            Self::section_header(ui, colors, "Prefabs", icons::draw_icon_prefab);
             ui.add_space(8.0);
             let top_height = prefab_pane_layout
                 .map(|layout| layout.top_height)
@@ -255,7 +250,7 @@ impl InspectorPanel {
                 top_rect.height(),
             );
         } else {
-            Self::section_header(ui, colors, "Tile Palette", Some(TILE_PALETTE_SECTION_ICON));
+            Self::section_header(ui, colors, "Tile Palette", icons::draw_icon_grid_3x3);
             ui.add_space(8.0);
             Self::draw_tile_palette(
                 ui,
@@ -288,6 +283,7 @@ impl InspectorPanel {
                 egui::vec2(ui.available_width(), PREFAB_PREVIEW_HEADER_HEIGHT),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
+                    icons::show_icon(ui, 20.0, colors.text, icons::draw_icon_eye);
                     ui.label(
                         egui::RichText::new("Preview")
                             .size(14.0)
@@ -331,13 +327,7 @@ impl InspectorPanel {
                             edit_stroke,
                             egui::StrokeKind::Inside,
                         );
-                        ui.painter().text(
-                            edit_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            PREFAB_EDIT_ICON,
-                            icons::symbol_icon_font_id(12.0),
-                            edit_icon_color,
-                        );
+                        icons::draw_icon_edit(ui.painter(), edit_rect, edit_icon_color);
                         if edit_enabled && edit_response.hovered() {
                             ui.output_mut(|output| {
                                 output.cursor_icon = egui::CursorIcon::PointingHand
@@ -379,8 +369,8 @@ impl InspectorPanel {
                 egui::vec2(ui.available_width(), tab_map_row_height),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    ui.vertical(|ui| {
-                        ui.add_space(TAB_MAP_LABEL_NUDGE_Y);
+                    ui.horizontal(|ui| {
+                        icons::show_icon(ui, 20.0, colors.text, icons::draw_icon_map_2);
                         ui.label(
                             egui::RichText::new("Tab Map")
                                 .size(14.0)
@@ -389,23 +379,20 @@ impl InspectorPanel {
                         );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let toggle_label = if bottom_section_state.is_open() {
-                            "-"
+                        let icon = if bottom_section_state.is_open() {
+                            icons::draw_icon_minus
                         } else {
-                            "+"
+                            icons::draw_icon_plus
                         };
-                        let toggle_response = ui.add_sized(
-                            egui::vec2(18.0, 16.0),
-                            egui::Button::new(
-                                egui::RichText::new(toggle_label)
-                                    .size(12.0)
-                                    .strong()
-                                    .color(colors.text),
-                            )
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::new(1.0, colors.border))
-                            .corner_radius(0.0),
+                        let (rect, toggle_response) =
+                            ui.allocate_exact_size(egui::vec2(18.0, 16.0), egui::Sense::click());
+                        ui.painter().rect_stroke(
+                            rect,
+                            0.0,
+                            egui::Stroke::new(1.0, colors.border),
+                            egui::StrokeKind::Inside,
                         );
+                        icon(ui.painter(), rect, colors.text);
                         if toggle_response.clicked() {
                             bottom_section_state.toggle(ui);
                         }
@@ -1177,16 +1164,10 @@ impl InspectorPanel {
     }
 
     /// Section header: bold label.
-    fn section_header(ui: &mut egui::Ui, colors: &ThemeColors, label: &str, icon: Option<&str>) {
+    fn section_header(ui: &mut egui::Ui, colors: &ThemeColors, label: &str, icon: icons::Icon) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            if let Some(icon) = icon {
-                ui.label(
-                    egui::RichText::new(icon)
-                        .font(icons::symbol_icon_font_id(14.0))
-                        .color(colors.text),
-                );
-            }
+            icons::show_icon(ui, 20.0, colors.text, icon);
             ui.label(
                 egui::RichText::new(label)
                     .size(14.0)
@@ -1557,13 +1538,7 @@ impl InspectorPanel {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let (icon_rect, _) =
                         ui.allocate_exact_size(egui::vec2(20.0, 24.0), egui::Sense::hover());
-                    ui.painter().text(
-                        icon_rect.center() + egui::vec2(0.0, 3.0),
-                        egui::Align2::CENTER_CENTER,
-                        PREFAB_SEARCH_ICON,
-                        icons::symbol_icon_font_id(16.0),
-                        colors.muted,
-                    );
+                    icons::draw_icon_search(ui.painter(), icon_rect, colors.muted);
                     ui.add(
                         egui::TextEdit::singleline(prefab_search)
                             .hint_text(egui::RichText::new("Search prefabs...").color(colors.muted))

@@ -267,17 +267,11 @@ impl ToolbarPanel {
         );
         active_shape.draw_icon(painter, icon_rect, icon_color);
 
-        let cx = rect.right() - 6.0;
-        let cy = rect.center().y + 6.5;
-        painter.add(egui::Shape::convex_polygon(
-            vec![
-                egui::pos2(cx - 2.8, cy - 1.4),
-                egui::pos2(cx + 2.8, cy - 1.4),
-                egui::pos2(cx, cy + 1.8),
-            ],
-            icon_color,
-            egui::Stroke::NONE,
-        ));
+        let caret = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 6.0, rect.center().y + 6.5),
+            egui::Vec2::splat(12.0),
+        );
+        icons::draw_icon_chevron_down(painter, caret, icon_color);
 
         if response.clicked() {
             *active_tool = Tool::Shape;
@@ -312,7 +306,7 @@ impl ToolbarPanel {
                 }
             });
 
-        let _ = tooltip::attach(response, format!("Shape: {} (R)", active_shape.label()));
+        let _ = tooltip::attach(response, format!("Shape: {} (U)", active_shape.label()));
     }
 
     fn file_icon_button(

@@ -93,7 +93,7 @@ impl MapSizeDialog {
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
-                draw_modal_title(ui, &colors, title_icon(title), title);
+                icons::dialog_title(ui, colors.text, title_icon(title), title);
                 ui.add_space(4.0);
 
                 if let Some(map) = current_map {
@@ -307,37 +307,12 @@ impl MapSizeDialog {
     }
 }
 
-fn title_icon(title: &str) -> &'static str {
+fn title_icon(title: &str) -> icons::Icon {
     match title {
-        "New Map" => "\u{EC01}",
-        "New Prefab" => "\u{E5D8}",
-        "Resize Canvas" => "\u{EE04}",
-        "Map Size" => "\u{1F4CF}",
-        "Resize" => "\u{1F4CF}",
-        _ => "\u{1F4CF}",
+        "New Map" => icons::draw_icon_new,
+        "New Prefab" => icons::draw_icon_prefab,
+        _ => icons::draw_icon_ruler,
     }
-}
-
-fn draw_modal_title(
-    ui: &mut egui::Ui,
-    colors: &crate::theme::ThemeColors,
-    icon: &str,
-    title: &str,
-) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        ui.label(
-            egui::RichText::new(icon)
-                .font(icons::symbol_icon_font_id(18.0))
-                .color(colors.text),
-        );
-        ui.label(
-            egui::RichText::new(title)
-                .size(18.0)
-                .strong()
-                .color(colors.text),
-        );
-    });
 }
 
 #[cfg(test)]

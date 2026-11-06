@@ -113,9 +113,9 @@ jobs:
           pkg_dir="${{ matrix.artifact }}-package"
           mkdir -p "$pkg_dir"
           cp "target/${{ matrix.target }}/release/cartographer" "$pkg_dir/"
-          cp maps.ron packaging/install-desktop.sh "$pkg_dir/"
+          cp maps.ron packaging/install-desktop.sh cartographer/icons/LICENSE-Tabler.txt "$pkg_dir/"
           cp cartographer/app-icon.png "$pkg_dir/cartographer.png"
-          tar -C "$pkg_dir" -czf "${{ matrix.artifact }}.tar.gz" cartographer maps.ron install-desktop.sh cartographer.png
+          tar -C "$pkg_dir" -czf "${{ matrix.artifact }}.tar.gz" cartographer maps.ron install-desktop.sh cartographer.png LICENSE-Tabler.txt
 
       - name: Package (Windows)
         if: contains(matrix.target, 'windows-msvc')
@@ -127,7 +127,7 @@ jobs:
           llvm-readobj --coff-resources "$binary" > "$RUNNER_TEMP/cartographer-resources.txt"
           grep -q 'GROUP_ICON' "$RUNNER_TEMP/cartographer-resources.txt"
           cp "$binary" "$pkg_dir/"
-          cp "maps.ron" "$pkg_dir/maps.ron"
+          cp "maps.ron" cartographer/icons/LICENSE-Tabler.txt "$pkg_dir/"
           rm -f "${{ matrix.artifact }}.zip"
           (
             cd "$pkg_dir"

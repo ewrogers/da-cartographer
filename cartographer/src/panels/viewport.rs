@@ -10,11 +10,6 @@ use crate::widgets::{icons, tooltip};
 
 const SELECTION_AUTO_PAN_MARGIN: f32 = 56.0;
 const SELECTION_AUTO_PAN_SPEED: f32 = 520.0;
-const CONTEXT_ICON_CUT: &str = "\u{2702}";
-const CONTEXT_ICON_COPY: &str = "\u{E202}";
-const CONTEXT_ICON_PASTE: &str = "\u{1F4CB}";
-const CONTEXT_ICON_CREATE_PREFAB: &str = "\u{EB03}";
-const CONTEXT_ICON_DELETE: &str = "\u{1F5D1}";
 
 /// Returns true if a wall tile ID should be rendered.
 ///
@@ -939,7 +934,7 @@ impl ViewportPanel {
                         if active_tool == Tool::Select && context_selection.is_some() {
                             if Self::context_menu_action(
                                 ui,
-                                CONTEXT_ICON_CUT,
+                                icons::draw_icon_scissors,
                                 "Cut",
                                 Some("Cmd+X"),
                                 None,
@@ -955,7 +950,7 @@ impl ViewportPanel {
                             }
                             if Self::context_menu_action(
                                 ui,
-                                CONTEXT_ICON_COPY,
+                                icons::draw_icon_copy,
                                 "Copy",
                                 Some("Cmd+C"),
                                 None,
@@ -973,7 +968,7 @@ impl ViewportPanel {
 
                         if Self::context_menu_action(
                             ui,
-                            CONTEXT_ICON_PASTE,
+                            icons::draw_icon_clipboard,
                             "Paste",
                             Some("Cmd+V"),
                             None,
@@ -988,7 +983,7 @@ impl ViewportPanel {
                         if active_tool == Tool::Select && context_selection.is_some() {
                             if Self::context_menu_action(
                                 ui,
-                                CONTEXT_ICON_CREATE_PREFAB,
+                                icons::draw_icon_prefab,
                                 "Create Prefab...",
                                 None,
                                 None,
@@ -1005,7 +1000,7 @@ impl ViewportPanel {
                             ui.separator();
                             if Self::context_menu_action(
                                 ui,
-                                CONTEXT_ICON_DELETE,
+                                icons::draw_icon_trash,
                                 "Delete",
                                 Some("Backspace"),
                                 Some(colors.accent),
@@ -1264,8 +1259,8 @@ impl ViewportPanel {
         colors: &ThemeColors,
     ) {
         let btn_h = 24.0;
-        let grid_w = 42.0;
-        let tab_w = 42.0;
+        let grid_w = 26.0;
+        let tab_w = 26.0;
         let layer_w = 26.0;
         let sep_w = 1.0;
         let pad = 6.0;
@@ -1310,7 +1305,7 @@ impl ViewportPanel {
         // Then do interactions + paint buttons on top
         Self::overlay_toggle(
             ui,
-            "Grid",
+            icons::draw_icon_grid_3x3,
             grid_rect,
             show_grid,
             true,
@@ -1319,20 +1314,20 @@ impl ViewportPanel {
         );
         Self::overlay_toggle(
             ui,
-            "Tab",
+            icons::draw_icon_barrier_block,
             tab_rect,
             show_collision_overlay,
             collision_available,
             colors,
             if collision_available {
-                "Tab collision overlay (Tab)"
+                "Collision overlay (Tab)"
             } else {
-                "Tab collision overlay (unavailable: SOTP.DAT missing)"
+                "Collision overlay (unavailable: SOTP.DAT missing)"
             },
         );
         Self::overlay_toggle(
             ui,
-            "G",
+            icons::draw_icon_layer_ground,
             ground_rect,
             &mut layers.ground,
             true,
@@ -1341,7 +1336,7 @@ impl ViewportPanel {
         );
         Self::overlay_toggle(
             ui,
-            "L",
+            icons::draw_icon_layer_left,
             left_rect,
             &mut layers.left_wall,
             true,
@@ -1350,7 +1345,7 @@ impl ViewportPanel {
         );
         Self::overlay_toggle(
             ui,
-            "R",
+            icons::draw_icon_layer_right,
             right_rect,
             &mut layers.right_wall,
             true,
@@ -1361,14 +1356,14 @@ impl ViewportPanel {
 
     fn overlay_toggle(
         ui: &mut egui::Ui,
-        label: &str,
+        icon: icons::Icon,
         rect: egui::Rect,
         enabled: &mut bool,
         interactive: bool,
         colors: &ThemeColors,
         tooltip: &str,
     ) {
-        let id = ui.id().with(("overlay_toggle", label));
+        let id = ui.id().with(("overlay_toggle", tooltip));
         let sense = if interactive {
             egui::Sense::click()
         } else {
@@ -1408,13 +1403,7 @@ impl ViewportPanel {
             colors.muted
         };
 
-        ui.painter().text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(13.0),
-            text_color,
-        );
+        icon(ui.painter(), rect, text_color);
 
         if interactive && response.clicked() {
             *enabled = !*enabled;
@@ -1425,8 +1414,8 @@ impl ViewportPanel {
 
     fn overlay_rect(viewport_rect: egui::Rect) -> egui::Rect {
         let btn_h = 24.0;
-        let grid_w = 42.0;
-        let tab_w = 42.0;
+        let grid_w = 26.0;
+        let tab_w = 26.0;
         let layer_w = 26.0;
         let sep_w = 1.0;
         let pad = 6.0;
@@ -1941,7 +1930,7 @@ impl ViewportPanel {
 
     fn context_menu_action(
         ui: &mut egui::Ui,
-        icon: &str,
+        icon: icons::Icon,
         label: &str,
         hotkey: Option<&str>,
         color: Option<egui::Color32>,
@@ -1950,7 +1939,6 @@ impl ViewportPanel {
         const MENU_LEFT_PADDING: f32 = 8.0;
         const MENU_ICON_WIDTH: f32 = 18.0;
         const MENU_MIN_WIDTH: f32 = 276.0;
-        const MENU_ICON_SIZE: f32 = 14.0;
         const MENU_HOTKEY_FONT_SIZE: f32 = 12.0;
 
         let colors = theme_colors();
@@ -1978,13 +1966,7 @@ impl ViewportPanel {
             egui::pos2(icon_x, rect.top()),
             egui::vec2(MENU_ICON_WIDTH, row_height),
         );
-        ui.painter().text(
-            egui::pos2(icon_rect.left(), icon_rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            icon,
-            icons::symbol_icon_font_id(MENU_ICON_SIZE),
-            icon_color,
-        );
+        icon(ui.painter(), icon_rect, icon_color);
 
         let label_x = icon_rect.right() + 10.0;
         ui.painter().text(

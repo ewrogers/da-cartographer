@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use super::icons;
 use crate::theme::ThemeColors;
 
 pub const TITLE_BAR_BUTTON_WIDTH: f32 = 46.0;
@@ -44,41 +45,13 @@ pub fn title_bar_icon_button(
         idle_icon
     };
 
-    let stroke = egui::Stroke::new(1.5, icon_color);
-    let center = rect.center();
-    let size = 5.0;
-
-    match icon {
-        TitleBarIcon::Minimize => {
-            painter.line_segment(
-                [
-                    egui::pos2(center.x - size, center.y),
-                    egui::pos2(center.x + size, center.y),
-                ],
-                stroke,
-            );
-        }
-        TitleBarIcon::Maximize => {
-            let r = egui::Rect::from_center_size(center, egui::vec2(size * 2.0, size * 2.0));
-            painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
-        }
-        TitleBarIcon::Close => {
-            painter.line_segment(
-                [
-                    egui::pos2(center.x - size, center.y - size),
-                    egui::pos2(center.x + size, center.y + size),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(center.x - size, center.y + size),
-                    egui::pos2(center.x + size, center.y - size),
-                ],
-                stroke,
-            );
-        }
-    }
+    let draw = match icon {
+        TitleBarIcon::Minimize => icons::draw_icon_minus,
+        TitleBarIcon::Maximize => icons::draw_icon_square,
+        TitleBarIcon::Close => icons::draw_icon_x,
+    };
+    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(22.0));
+    draw(painter, icon_rect, icon_color);
 
     response
 }

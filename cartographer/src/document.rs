@@ -1067,11 +1067,11 @@ impl MapDocument {
         for change in &batch {
             change.apply_undo(&mut self.map);
         }
+        self.selection = None;
         if batch
             .iter()
             .any(|change| matches!(change, EditChange::ResizeMap { .. }))
         {
-            self.selection = None;
             self.camera = Camera::default();
         }
         self.redo_stack.push(batch);
@@ -1088,11 +1088,11 @@ impl MapDocument {
         for change in &batch {
             change.apply_redo(&mut self.map);
         }
+        self.selection = None;
         if batch
             .iter()
             .any(|change| matches!(change, EditChange::ResizeMap { .. }))
         {
-            self.selection = None;
             self.camera = Camera::default();
         }
         self.undo_stack.push(batch);
@@ -1587,6 +1587,7 @@ mod tests {
         );
 
         assert!(doc.undo());
+        assert_eq!(doc.selection(), None);
         assert_eq!(
             doc.map.tiles[1 * 5 + 1],
             map::Tile {
@@ -1605,6 +1606,7 @@ mod tests {
         );
 
         assert!(doc.redo());
+        assert_eq!(doc.selection(), None);
         assert_eq!(doc.map.tiles[1 * 5 + 1], map::Tile::default());
         assert_eq!(doc.map.tiles[2].ground, 1);
         assert_eq!(doc.map.tiles[7].left_wall, 8);

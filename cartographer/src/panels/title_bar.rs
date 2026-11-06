@@ -5,6 +5,8 @@ use crate::theme::{ThemeColors, theme_colors};
 use crate::widgets::{TitleBarIcon, title_bar_icon_button};
 
 const TITLE_BAR_HEIGHT: f32 = 36.0;
+const MACOS_CONTROLS_WIDTH: f32 = 80.0;
+const CUSTOM_CONTROLS_WIDTH: f32 = 46.0 * 3.0;
 
 pub struct TitleBarPanel;
 
@@ -26,6 +28,18 @@ impl TitleBarPanel {
 
     fn draw(ui: &mut egui::Ui, colors: &ThemeColors, icon: Option<&egui::TextureHandle>) {
         let rect = ui.max_rect();
+        let native_controls = cfg!(target_os = "macos");
+        let fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        let left_inset = if native_controls && !fullscreen {
+            MACOS_CONTROLS_WIDTH
+        } else {
+            0.0
+        };
+        let right_inset = if native_controls {
+            0.0
+        } else {
+            CUSTOM_CONTROLS_WIDTH
+        };
 
         // Bottom border (paint before layout so it doesn't conflict)
         ui.painter().line_segment(
@@ -38,7 +52,7 @@ impl TitleBarPanel {
 
         // Icon + title text
         let icon_size = 22.0;
-        let icon_left = rect.left() + 12.0;
+        let icon_left = rect.left() + left_inset + 12.0;
         let icon_rect = egui::Rect::from_center_size(
             egui::pos2(icon_left + icon_size / 2.0, rect.center().y),
             egui::vec2(icon_size, icon_size),
@@ -62,9 +76,9 @@ impl TitleBarPanel {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
             // Draggable title area
-            let title_rect = egui::Rect::from_min_size(
-                rect.min,
-                egui::vec2(rect.width() - 46.0 * 3.0, TITLE_BAR_HEIGHT),
+            let title_rect = egui::Rect::from_min_max(
+                rect.min + egui::vec2(left_inset, 0.0),
+                rect.max - egui::vec2(right_inset, 0.0),
             );
             let title_response = ui.interact(
                 title_rect,
@@ -75,14 +89,15 @@ impl TitleBarPanel {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
             if title_response.double_clicked() {
-                let is_fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
+                    .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
             }
 
-            // Window control buttons (right-aligned)
-            let buttons_x = rect.right() - 46.0 * 3.0;
-            ui.allocate_space(egui::vec2(buttons_x - rect.left(), 0.0));
+            if native_controls {
+                return;
+            }
+
+            ui.allocate_space(egui::vec2(rect.width() - right_inset, 0.0));
 
             if title_bar_icon_button(ui, TitleBarIcon::Minimize, TITLE_BAR_HEIGHT, colors).clicked()
             {
@@ -91,9 +106,8 @@ impl TitleBarPanel {
             }
             if title_bar_icon_button(ui, TitleBarIcon::Maximize, TITLE_BAR_HEIGHT, colors).clicked()
             {
-                let is_fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
+                    .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
             }
             if title_bar_icon_button(ui, TitleBarIcon::Close, TITLE_BAR_HEIGHT, colors).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

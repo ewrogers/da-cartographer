@@ -2,14 +2,17 @@ use eframe::egui;
 
 use crate::document::MapDocument;
 use crate::theme::{ThemeColors, theme_colors};
-use crate::widgets::tooltip;
+use crate::widgets::{icons, tooltip};
 
 const TAB_BAR_HEIGHT: f32 = 32.0;
+const CLOSE_WIDTH: f32 = 24.0;
 const NAV_BUTTON_WIDTH: f32 = 24.0;
 
 pub enum TabBarAction {
     None,
     CloseTab(usize),
+    CloseOthers(usize),
+    CloseRight(usize),
     SwitchTab(usize),
 }
 
@@ -63,7 +66,12 @@ impl TabBarPanel {
                     // Left scroll button
                     if needs_scroll {
                         let can_scroll_left = self.scroll_offset > 0.0;
-                        if Self::nav_button(ui, "<", can_scroll_left, &colors) {
+                        if Self::nav_button(
+                            ui,
+                            icons::draw_icon_chevron_left,
+                            can_scroll_left,
+                            &colors,
+                        ) {
                             self.scroll_offset = (self.scroll_offset - 120.0).max(0.0);
                         }
                     }
@@ -88,7 +96,8 @@ impl TabBarPanel {
                         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                         for (i, doc) in documents.iter().enumerate() {
                             let is_active = i == active_tab;
-                            let tab_action = Self::tab_button(ui, doc, i, is_active, &colors);
+                            let tab_action =
+                                Self::tab_button(ui, doc, i, documents.len(), is_active, &colors);
                             if !matches!(tab_action, TabBarAction::None) {
                                 action = tab_action;
                             }
@@ -100,7 +109,12 @@ impl TabBarPanel {
                         let max_scroll = (total_tabs_width - tabs_area_width).max(0.0);
                         self.scroll_offset = self.scroll_offset.min(max_scroll);
                         let can_scroll_right = self.scroll_offset < max_scroll;
-                        if Self::nav_button(ui, ">", can_scroll_right, &colors) {
+                        if Self::nav_button(
+                            ui,
+                            icons::draw_icon_chevron_right,
+                            can_scroll_right,
+                            &colors,
+                        ) {
                             let max_s = (total_tabs_width - tabs_area_width).max(0.0);
                             self.scroll_offset = (self.scroll_offset + 120.0).min(max_s);
                         }
@@ -147,7 +161,7 @@ impl TabBarPanel {
         };
 
         let font = egui::FontId::proportional(13.0);
-        let close_width: f32 = 20.0;
+        let close_width = CLOSE_WIDTH;
         let h_pad: f32 = 12.0;
         let galley = ui.painter().layout_no_wrap(label, font, text_color);
         let text_width = galley.size().x;
@@ -162,13 +176,18 @@ impl TabBarPanel {
         } else {
             name.len()
         };
-        let close_width: f32 = 20.0;
+        let close_width = CLOSE_WIDTH;
         let h_pad: f32 = 12.0;
         let approx_char_width = 7.5;
         h_pad + chars as f32 * approx_char_width + 6.0 + close_width + 6.0
     }
 
-    fn nav_button(ui: &mut egui::Ui, label: &str, enabled: bool, colors: &ThemeColors) -> bool {
+    fn nav_button(
+        ui: &mut egui::Ui,
+        icon: icons::Icon,
+        enabled: bool,
+        colors: &ThemeColors,
+    ) -> bool {
         let size = egui::vec2(NAV_BUTTON_WIDTH, TAB_BAR_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
         let painter = ui.painter();
@@ -189,13 +208,7 @@ impl TabBarPanel {
         } else {
             colors.border
         };
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(14.0),
-            text_color,
-        );
+        icon(painter, rect, text_color);
 
         enabled && response.clicked()
     }
@@ -204,6 +217,7 @@ impl TabBarPanel {
         ui: &mut egui::Ui,
         doc: &MapDocument,
         index: usize,
+        tab_count: usize,
         is_active: bool,
         colors: &ThemeColors,
     ) -> TabBarAction {
@@ -225,7 +239,7 @@ impl TabBarPanel {
 
         // Measure text to compute tab width
         let font = egui::FontId::proportional(13.0);
-        let close_width: f32 = 20.0;
+        let close_width = CLOSE_WIDTH;
         let h_pad: f32 = 12.0;
         let galley = ui
             .painter()
@@ -277,13 +291,31 @@ impl TabBarPanel {
         } else {
             colors.border
         };
-        painter.text(
-            close_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "\u{00D7}",
-            egui::FontId::proportional(14.0),
-            close_color,
-        );
+        icons::draw_icon_x(painter, close_rect, close_color);
+
+        tab_response
+            .clone()
+            .union(close_response.clone())
+            .context_menu(|ui| {
+                for (label, enabled, choice) in [
+                    ("Close", true, TabBarAction::CloseTab(index)),
+                    (
+                        "Close Others",
+                        tab_count > 1,
+                        TabBarAction::CloseOthers(index),
+                    ),
+                    (
+                        "Close Tabs to the Right",
+                        index + 1 < tab_count,
+                        TabBarAction::CloseRight(index),
+                    ),
+                ] {
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        action = choice;
+                        ui.close();
+                    }
+                }
+            });
 
         // 2px accent underline on active tab (full width)
         if is_active {

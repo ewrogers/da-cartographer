@@ -43,9 +43,17 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 800.0])
         .with_min_inner_size([960.0, 600.0])
-        .with_decorations(false)
+        .with_decorations(cfg!(target_os = "macos"))
         .with_app_id(APP_ID)
         .with_title(APP_TITLE);
+
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false);
+    }
 
     let icon = load_app_icon().map(Arc::new);
     if let Some(icon) = &icon {
