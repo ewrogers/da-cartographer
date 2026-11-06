@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updated the colors and added a full-bleed slate icon with an outlined teal octagram
   for Windows, macOS, and Linux.
 - Added a macOS app bundle and a Linux application-menu installer.
+- Added native macOS window controls and refreshed the editor icons, including
+  the Tile Palette, collision overlay, and status bar.
+- Kept the window responsive while preparing game assets.
+- Added map tab context menus for closing a tab, other tabs, or tabs to its right.
+- Cleared stale editing previews when undoing or redoing an edit.
+- Moved CI and release packaging for macOS, Windows, and Linux on x86_64 and
+  arm64 to GitHub-hosted runners.
 - Simplified the setup instructions and moved editing tips to the editor guide.
 - Kept undo and redo available after saving and made map and prefab saves atomic.
 - Loaded sparse wall sprite banks and fixed animation frames and palette lookup.

@@ -12,7 +12,9 @@ content model.
 - [render](render/) decodes indexed art and builds texture atlases.
 - [cartographer](cartographer/) owns the egui UI, editing, and PNG export.
 - [packaging](packaging/) and the [release workflow](.github/workflows/release.yml)
-  build platform packages from the shared icon.
+  build platform packages from the shared icon. CI tests and packages all six
+  platform and architecture combinations on GitHub-hosted runners. Pushing a
+  version tag publishes those packages as a DA Cartographer release.
 
 ## Compatibility and handoff
 
