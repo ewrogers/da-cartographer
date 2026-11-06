@@ -1,0 +1,117 @@
+use eframe::egui;
+
+use crate::APP_TITLE;
+use crate::theme::{ThemeColors, theme_colors};
+use crate::widgets::{TitleBarIcon, title_bar_icon_button};
+
+const TITLE_BAR_HEIGHT: f32 = 36.0;
+const MACOS_CONTROLS_WIDTH: f32 = 80.0;
+const CUSTOM_CONTROLS_WIDTH: f32 = 46.0 * 3.0;
+
+pub struct TitleBarPanel;
+
+impl TitleBarPanel {
+    pub fn show(ctx: &egui::Context, icon: Option<&egui::TextureHandle>) {
+        let colors = theme_colors();
+
+        egui::TopBottomPanel::top("title_bar")
+            .exact_height(TITLE_BAR_HEIGHT)
+            .frame(
+                egui::Frame::NONE
+                    .fill(colors.bg_2)
+                    .inner_margin(egui::Margin::ZERO),
+            )
+            .show(ctx, |ui| {
+                Self::draw(ui, &colors, icon);
+            });
+    }
+
+    fn draw(ui: &mut egui::Ui, colors: &ThemeColors, icon: Option<&egui::TextureHandle>) {
+        let rect = ui.max_rect();
+        let native_controls = cfg!(target_os = "macos");
+        let fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        let left_inset = if native_controls && !fullscreen {
+            MACOS_CONTROLS_WIDTH
+        } else {
+            0.0
+        };
+        let right_inset = if native_controls {
+            0.0
+        } else {
+            CUSTOM_CONTROLS_WIDTH
+        };
+
+        // Bottom border (paint before layout so it doesn't conflict)
+        ui.painter().line_segment(
+            [
+                egui::pos2(rect.left(), rect.bottom()),
+                egui::pos2(rect.right(), rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, colors.border),
+        );
+
+        // Icon + title text
+        let icon_size = 22.0;
+        let icon_left = rect.left() + left_inset + 12.0;
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(icon_left + icon_size / 2.0, rect.center().y),
+            egui::vec2(icon_size, icon_size),
+        );
+        if let Some(icon) = icon {
+            let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+            ui.painter()
+                .image(icon.id(), icon_rect, uv, egui::Color32::WHITE);
+        }
+
+        let text_left = icon_rect.right() + 12.0;
+        ui.painter().text(
+            egui::pos2(text_left, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            APP_TITLE,
+            egui::FontId::proportional(14.0),
+            colors.muted,
+        );
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+
+            // Draggable title area
+            let title_rect = egui::Rect::from_min_max(
+                rect.min + egui::vec2(left_inset, 0.0),
+                rect.max - egui::vec2(right_inset, 0.0),
+            );
+            let title_response = ui.interact(
+                title_rect,
+                ui.id().with("title_bar_drag"),
+                egui::Sense::click_and_drag(),
+            );
+            if title_response.dragged() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            if title_response.double_clicked() {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+            }
+
+            if native_controls {
+                return;
+            }
+
+            ui.allocate_space(egui::vec2(rect.width() - right_inset, 0.0));
+
+            if title_bar_icon_button(ui, TitleBarIcon::Minimize, TITLE_BAR_HEIGHT, colors).clicked()
+            {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            if title_bar_icon_button(ui, TitleBarIcon::Maximize, TITLE_BAR_HEIGHT, colors).clicked()
+            {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+            }
+            if title_bar_icon_button(ui, TitleBarIcon::Close, TITLE_BAR_HEIGHT, colors).clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+    }
+}

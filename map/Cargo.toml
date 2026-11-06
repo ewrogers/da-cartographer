@@ -2,3 +2,6 @@
 name = "map"
 edition.workspace = true
 version.workspace = true
+
+[dependencies]
+tempfile = "3"

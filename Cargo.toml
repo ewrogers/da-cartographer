@@ -1,10 +1,15 @@
 [workspace]
-members = ["archive", "map", "render", "editor"]
+members = [
+    "archive",
+    "cartographer",
+    "map",
+    "render",
+]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "0.6.0"
+version = "0.7.0"
 
 [profile.release]
 codegen-units = 1

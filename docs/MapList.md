@@ -1,4 +1,7 @@
-# DarkAges Map List
+# Dark Ages map reference
+
+Use these names and dimensions to identify map files. The editor reads the
+bundled `maps.ron` when matching numbered files.
 
 | Map ID | Map Name | Map Size |
 | --- | --- | --- |
