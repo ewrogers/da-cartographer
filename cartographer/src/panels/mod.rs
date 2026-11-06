@@ -13,7 +13,7 @@ mod viewport;
 mod window_frame;
 
 pub use asset_setup_dialog::{AssetSetupDialog, AssetSetupDialogAction};
-pub use export_dialog::{ExportDialog, ExportDialogAction};
+pub use export_dialog::{ExportDialog, ExportDialogAction, TabMapExport};
 pub use inspector::{InspectorPanel, InspectorResponse};
 pub use map_size_dialog::{MapSizeDialog, MapSizeDialogMode};
 pub use prefab_create_dialog::{PrefabCreateDialog, PrefabCreateDialogAction};

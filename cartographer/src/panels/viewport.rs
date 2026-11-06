@@ -5,7 +5,7 @@ use crate::document::{Camera, LayerVisibility, PaintLayer, TileSelection};
 use crate::prefab;
 use crate::shape::{self, ShapeKind};
 use crate::theme::{ThemeColors, theme_colors};
-use crate::tile_animation::GroundAnimationTable;
+use crate::tile_animation::{TileAnimationTable, ground_tile, wall_tile};
 use crate::widgets::{icons, tooltip};
 
 const SELECTION_AUTO_PAN_MARGIN: f32 = 56.0;
@@ -36,31 +36,28 @@ fn is_layer_visible(layers: &LayerVisibility, layer: PaintLayer) -> bool {
     }
 }
 
-fn animated_ground_tile_id(
-    ground_animation_table: Option<&GroundAnimationTable>,
-    tile_id: u16,
-    animation_time_seconds: f64,
-) -> u16 {
-    let Some(raw_tile_id) = tile_id.checked_sub(1) else {
-        return tile_id;
-    };
-    ground_animation_table
-        .map(|table| {
-            table
-                .animated_tile_id(raw_tile_id, animation_time_seconds)
-                .saturating_add(1)
-        })
-        .unwrap_or(tile_id)
-}
+/// Conservative viewport bounds expressed in isometric depth and row coordinates.
+fn visible_bands(
+    width: u32,
+    height: u32,
+    origin: egui::Pos2,
+    half: egui::Vec2,
+    viewport: egui::Rect,
+    wall_headroom: f32,
+) -> impl Iterator<Item = (u32, std::ops::RangeInclusive<u32>)> {
+    let first_depth = ((viewport.top() - origin.y) / half.y - 2.0).floor() as u32;
+    let last_depth = ((viewport.bottom() - origin.y + wall_headroom) / half.y).ceil() as u32;
+    let left = (viewport.left() - origin.x) / half.x - 1.0;
+    let right = (viewport.right() - origin.x) / half.x + 1.0;
 
-fn animated_wall_tile_id(
-    wall_animation_table: Option<&GroundAnimationTable>,
-    wall_id: u16,
-    animation_time_seconds: f64,
-) -> u16 {
-    wall_animation_table
-        .map(|table| table.animated_tile_id(wall_id, animation_time_seconds))
-        .unwrap_or(wall_id)
+    (first_depth..=last_depth.min(width + height - 2)).map(move |depth| {
+        // x is proportional to col - row, which is depth - 2 * row.
+        let first_row = ((depth as f32 - right) * 0.5).floor() as u32;
+        let last_row = ((depth as f32 - left) * 0.5).ceil() as u32;
+        let first_row = first_row.max(depth.saturating_sub(width - 1));
+        let last_row = last_row.min(depth).min(height - 1);
+        (depth, first_row..=last_row)
+    })
 }
 
 #[derive(Default)]
@@ -132,8 +129,8 @@ impl ViewportPanel {
         selection_clipboard_available: bool,
         stamp_prefab: Option<&map::Map>,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         atlas_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -1062,8 +1059,8 @@ impl ViewportPanel {
         painter: &egui::Painter,
         map: &map::Map,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -1082,15 +1079,25 @@ impl ViewportPanel {
 
         let width = map.width as u32;
         let height = map.height as u32;
-        let max_depth = width + height;
+        if width == 0 || height == 0 {
+            return;
+        }
+        let wall_headroom = wall_atlas
+            .filter(|_| wall_texture.is_some() && (layers.left_wall || layers.right_wall))
+            .map_or(0.0, |atlas| {
+                (atlas.max_sprite_height() as f32 * zoom - th).max(0.0)
+            });
+        let bands = visible_bands(
+            width,
+            height,
+            origin,
+            egui::vec2(half_w, half_h),
+            viewport,
+            wall_headroom,
+        );
         let mut wall_outline_sprites: Vec<WallOutlineSprite> = Vec::new();
         let mut wall_meshes: Vec<egui::Mesh> = Vec::new();
-
-        for depth in 0..max_depth {
-            // All (col, row) pairs with col + row == depth, within map bounds.
-            let row_min = depth.saturating_sub(width.saturating_sub(1));
-            let row_max = depth.min(height.saturating_sub(1));
-
+        for (depth, rows) in bands {
             // Batch ground tiles for this depth band.
             let mut ground_mesh = tile_texture
                 .as_ref()
@@ -1101,7 +1108,7 @@ impl ViewportPanel {
                 .as_ref()
                 .map(|t| egui::Mesh::with_texture(t.id()));
 
-            for row in row_min..=row_max {
+            for row in rows {
                 let col = depth - row;
                 let tile = &map.tiles[row as usize * width as usize + col as usize];
                 let outline_walls = wall_outline_selection
@@ -1114,8 +1121,9 @@ impl ViewportPanel {
                 // --- Ground ---
                 if layers.ground && tile.ground != 0 {
                     if let (Some(atlas), Some(mesh)) = (tile_atlas, ground_mesh.as_mut()) {
-                        let animated_tile_id = animated_ground_tile_id(
+                        let animated_tile_id = ground_tile(
                             ground_animation_table,
+                            atlas,
                             tile.ground,
                             animation_time_seconds,
                         );
@@ -1141,8 +1149,9 @@ impl ViewportPanel {
                 // --- Left wall ---
                 if layers.left_wall && is_rendered_wall(tile.left_wall) {
                     if let (Some(atlas), Some(mesh)) = (wall_atlas, wall_mesh.as_mut()) {
-                        let animated_wall_id = animated_wall_tile_id(
+                        let animated_wall_id = wall_tile(
                             wall_animation_table,
+                            atlas,
                             tile.left_wall,
                             animation_time_seconds,
                         );
@@ -1178,8 +1187,9 @@ impl ViewportPanel {
                 // --- Right wall ---
                 if layers.right_wall && is_rendered_wall(tile.right_wall) {
                     if let (Some(atlas), Some(mesh)) = (wall_atlas, wall_mesh.as_mut()) {
-                        let animated_wall_id = animated_wall_tile_id(
+                        let animated_wall_id = wall_tile(
                             wall_animation_table,
+                            atlas,
                             tile.right_wall,
                             animation_time_seconds,
                         );
@@ -2171,7 +2181,7 @@ impl ViewportPanel {
         half_w: f32,
         half_h: f32,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_id: u16,
         is_left_wall: bool,
         animation_time_seconds: f64,
@@ -2180,7 +2190,7 @@ impl ViewportPanel {
             return;
         };
         let animated_wall_id =
-            animated_wall_tile_id(wall_animation_table, wall_id, animation_time_seconds);
+            wall_tile(wall_animation_table, atlas, wall_id, animation_time_seconds);
         let Some(sprite) = Self::wall_outline_sprite_for_tile(
             col,
             row,
@@ -2385,8 +2395,8 @@ impl ViewportPanel {
         paint_layer: PaintLayer,
         paint_value: u16,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -2423,8 +2433,8 @@ impl ViewportPanel {
         paint_layer: PaintLayer,
         paint_value: u16,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -2488,7 +2498,7 @@ impl ViewportPanel {
         half_w: f32,
         half_h: f32,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         selected_ground_tile: u16,
         alpha: u8,
@@ -2499,8 +2509,9 @@ impl ViewportPanel {
             _ => return,
         };
 
-        let animated_tile_id = animated_ground_tile_id(
+        let animated_tile_id = ground_tile(
             ground_animation_table,
+            atlas,
             selected_ground_tile,
             animation_time_seconds,
         );
@@ -2536,7 +2547,7 @@ impl ViewportPanel {
         half_w: f32,
         half_h: f32,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
         wall_id: u16,
         is_left_wall: bool,
@@ -2551,7 +2562,7 @@ impl ViewportPanel {
             return;
         }
         let animated_wall_id =
-            animated_wall_tile_id(wall_animation_table, wall_id, animation_time_seconds);
+            wall_tile(wall_animation_table, atlas, wall_id, animation_time_seconds);
         let idx = animated_wall_id as u32;
         let sprite_h = atlas.sprite_height(idx);
         if sprite_h == 0 {
@@ -2598,8 +2609,8 @@ impl ViewportPanel {
         half_w: f32,
         half_h: f32,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -2749,8 +2760,8 @@ impl ViewportPanel {
         half_w: f32,
         half_h: f32,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -3060,8 +3071,8 @@ impl ViewportPanel {
         paint_layer: PaintLayer,
         paint_value: u16,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -3168,8 +3179,8 @@ impl ViewportPanel {
         paint_layer: PaintLayer,
         paint_value: u16,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
         wall_texture: Option<&egui::TextureHandle>,
@@ -3219,5 +3230,39 @@ impl ViewportPanel {
                 y0 += sy;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn culling_preserves_visible_cells_including_tall_walls() {
+        let half = egui::vec2(28.0, 13.5);
+        let origin = egui::pos2(150.0, -20.0);
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0));
+        let width = 25;
+        let height = 31;
+        let headroom = 160.0;
+        let included: std::collections::HashSet<_> =
+            visible_bands(width, height, origin, half, viewport, headroom)
+                .flat_map(|(depth, rows)| rows.map(move |row| (depth - row, row)))
+                .collect();
+
+        for row in 0..height {
+            for col in 0..width {
+                let cx = origin.x + (col as f32 - row as f32) * half.x;
+                let cy = origin.y + (col + row) as f32 * half.y;
+                let cell = egui::Rect::from_min_max(
+                    egui::pos2(cx - half.x, cy - headroom),
+                    egui::pos2(cx + half.x, cy + 2.0 * half.y),
+                );
+                if viewport.intersects(cell) {
+                    assert!(included.contains(&(col, row)), "{col},{row}");
+                }
+            }
+        }
+        assert!(included.len() < (width * height) as usize / 2);
     }
 }

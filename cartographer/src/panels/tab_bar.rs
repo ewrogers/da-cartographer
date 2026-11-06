@@ -134,7 +134,11 @@ impl TabBarPanel {
     /// Measure the width a tab would occupy.
     fn measure_tab_width(ui: &egui::Ui, doc: &MapDocument, is_active: bool) -> f32 {
         let name = doc.tab_display_name();
-        let label = if doc.dirty { format!("{name} *") } else { name };
+        let label = if doc.is_dirty() {
+            format!("{name} *")
+        } else {
+            name
+        };
 
         let text_color = if is_active {
             egui::Color32::WHITE
@@ -153,7 +157,7 @@ impl TabBarPanel {
     /// Rough tab width estimate without painter access (for ensure_tab_visible).
     fn estimate_tab_width(doc: &MapDocument, _is_active: bool) -> f32 {
         let name = doc.tab_display_name();
-        let chars = if doc.dirty {
+        let chars = if doc.is_dirty() {
             name.len() + 2
         } else {
             name.len()
@@ -206,7 +210,11 @@ impl TabBarPanel {
         let mut action = TabBarAction::None;
 
         let name = doc.tab_display_name();
-        let label = if doc.dirty { format!("{name} *") } else { name };
+        let label = if doc.is_dirty() {
+            format!("{name} *")
+        } else {
+            name
+        };
 
         let bg = if is_active {
             colors.bg // seamless blend with viewport

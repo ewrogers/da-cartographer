@@ -32,6 +32,7 @@ pub struct SpriteAtlas {
     pixels: Vec<u8>,
     width: u32,
     height: u32,
+    max_sprite_height: u32,
     entries: Vec<Option<SpriteEntry>>,
 }
 
@@ -85,11 +86,14 @@ impl SpriteAtlas {
 
         // Compute the total pixel height across all sprites so we can choose
         // a column count that keeps the atlas within MAX_ATLAS_SIDE.
-        let total_height: u64 = sprites
-            .iter()
-            .filter_map(|s| s.as_ref())
-            .map(|s| s.height as u64)
-            .sum();
+        let (total_height, max_sprite_height) =
+            sprites
+                .iter()
+                .flatten()
+                .fold((0u64, 0u32), |(sum, max), sprite| {
+                    let height = u32::from(sprite.height);
+                    (sum + u64::from(height), max.max(height))
+                });
 
         // Minimum columns needed: total_height / max_height, with 10% headroom
         // for imperfect bin packing.
@@ -183,6 +187,7 @@ impl SpriteAtlas {
             pixels,
             width: atlas_width,
             height: atlas_height,
+            max_sprite_height,
             entries,
         })
     }
@@ -233,6 +238,10 @@ impl SpriteAtlas {
     /// Atlas dimensions in pixels `(width, height)`.
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    pub fn max_sprite_height(&self) -> u32 {
+        self.max_sprite_height
     }
 
     /// Number of sprite entries (including empty slots).

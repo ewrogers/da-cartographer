@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -192,7 +193,7 @@ impl PrefabFile {
     }
 
     pub fn into_map(self) -> io::Result<map::Map> {
-        let expected = self.width as usize * self.height as usize;
+        let expected = map::validate_dimensions(self.width, self.height)?;
         if self.tiles.len() != expected {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -221,7 +222,17 @@ impl PrefabFile {
 
     pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
-        let source = fs::read_to_string(path)?;
+        const MAX_PREFAB_BYTES: usize = 128 * 1024 * 1024;
+        let mut source = String::new();
+        fs::File::open(path)?
+            .take(MAX_PREFAB_BYTES as u64 + 1)
+            .read_to_string(&mut source)?;
+        if source.len() > MAX_PREFAB_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "prefab file exceeds 128 MiB",
+            ));
+        }
         ron::from_str(&source).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -247,7 +258,7 @@ impl PrefabFile {
                 format!("failed to serialize {}: {}", path.display(), error),
             )
         })?;
-        fs::write(path, serialized)
+        map::write_atomic(path, |file| file.write_all(serialized.as_bytes()))
     }
 }
 

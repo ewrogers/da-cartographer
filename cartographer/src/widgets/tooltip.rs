@@ -1,7 +1,8 @@
 use eframe::egui;
 
+use crate::theme::theme_colors;
+
 const TOOLTIP_TEXT_COLOR: egui::Color32 = egui::Color32::WHITE;
-const TOOLTIP_HOTKEY_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 168, 72);
 const TOOLTIP_FONT_SIZE: f32 = 13.0;
 
 pub fn attach(response: egui::Response, text: impl AsRef<str>) -> egui::Response {
@@ -19,7 +20,7 @@ pub fn attach(response: egui::Response, text: impl AsRef<str>) -> egui::Response
                     egui::RichText::new(format!("[{hotkey}]"))
                         .size(TOOLTIP_FONT_SIZE)
                         .family(egui::FontFamily::Monospace)
-                        .color(TOOLTIP_HOTKEY_COLOR),
+                        .color(theme_colors().accent),
                 );
             }
         });

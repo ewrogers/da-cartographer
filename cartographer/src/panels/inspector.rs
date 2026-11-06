@@ -4,7 +4,7 @@ use super::toolbar::Tool;
 use crate::document::PaintLayer;
 use crate::prefab::{OccupiedBounds, PrefabAsset};
 use crate::theme::{ThemeColors, theme_colors};
-use crate::tile_animation::GroundAnimationTable;
+use crate::tile_animation::{TileAnimationTable, ground_index, ground_tile, wall_tile};
 use crate::widgets::{icons, tooltip};
 
 const INSPECTOR_MIN_WIDTH: f32 = 260.0;
@@ -101,10 +101,10 @@ impl InspectorPanel {
         map: &map::Map,
         sotp: Option<&[u8]>,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         atlas_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
         active_paint_layer: &mut PaintLayer,
         selected_ground_tile: &mut u16,
@@ -179,10 +179,10 @@ impl InspectorPanel {
         map: &map::Map,
         sotp: Option<&[u8]>,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         atlas_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
         active_paint_layer: &mut PaintLayer,
         selected_ground_tile: &mut u16,
@@ -500,10 +500,10 @@ impl InspectorPanel {
         ui: &mut egui::Ui,
         colors: &ThemeColors,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         atlas_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
         active_paint_layer: &mut PaintLayer,
         selected_ground_tile: &mut u16,
@@ -685,7 +685,7 @@ impl InspectorPanel {
         ui: &mut egui::Ui,
         colors: &ThemeColors,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         atlas_texture: Option<&egui::TextureHandle>,
         selected_ground_tile: &mut u16,
         reveal_ground_tile: &mut Option<u16>,
@@ -715,12 +715,9 @@ impl InspectorPanel {
 
         let selectable_count = atlas_count.min(u16::MAX as usize);
         let ground_indices = (0..selectable_count as u32)
-            .filter(|&atlas_index| {
-                ground_animation_table
-                    .map(|table| {
-                        table.representative_tile_id(atlas_index as u16) as u32 == atlas_index
-                    })
-                    .unwrap_or(true)
+            .filter(|&index| {
+                let id = index as u16 + 1;
+                Self::representative_ground_palette_tile_id(ground_animation_table, atlas, id) == id
             })
             .collect::<Vec<_>>();
         if ground_indices.is_empty() {
@@ -756,11 +753,13 @@ impl InspectorPanel {
             .auto_shrink([false, false]);
         let mut consumed_reveal = false;
         if let Some(target_id) = *reveal_ground_tile {
-            let representative_atlas_index = target_id.checked_sub(1).map(|tile_id| {
-                ground_animation_table
-                    .map(|table| table.representative_tile_id(tile_id))
-                    .unwrap_or(tile_id) as u32
-            });
+            let representative_atlas_index = Self::representative_ground_palette_tile_id(
+                ground_animation_table,
+                atlas,
+                target_id,
+            )
+            .checked_sub(1)
+            .map(u32::from);
             if let Some(target_idx) = representative_atlas_index
                 .and_then(|atlas_index| ground_indices.iter().position(|&id| id == atlas_index))
             {
@@ -807,7 +806,7 @@ impl InspectorPanel {
         ui: &mut egui::Ui,
         colors: &ThemeColors,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
         selected_wall_tile: &mut u16,
         reveal_wall_tile: &mut Option<u16>,
@@ -824,12 +823,12 @@ impl InspectorPanel {
         let wall_ids = (1..atlas.sprite_count())
             .filter(|&id| {
                 atlas.sprite_rect(id).is_some()
-                    && wall_animation_table
-                        .map(|table| {
-                            table.representative_tile_id(id.min(u16::MAX as u32) as u16) as u32
-                                == id
-                        })
-                        .unwrap_or(true)
+                    && Self::representative_wall_palette_tile_id(
+                        wall_animation_table,
+                        atlas,
+                        id as u16,
+                    ) as u32
+                        == id
             })
             .collect::<Vec<_>>();
         if wall_ids.is_empty() {
@@ -855,9 +854,9 @@ impl InspectorPanel {
             .auto_shrink([false, false]);
         let mut consumed_reveal = false;
         if let Some(target_id) = *reveal_wall_tile {
-            let representative_wall_id = wall_animation_table
-                .map(|table| table.representative_tile_id(target_id))
-                .unwrap_or(target_id) as u32;
+            let representative_wall_id =
+                Self::representative_wall_palette_tile_id(wall_animation_table, atlas, target_id)
+                    as u32;
             if let Some(target_idx) = wall_ids.iter().position(|&id| id == representative_wall_id) {
                 let target_row = target_idx / columns;
                 let target_offset =
@@ -914,41 +913,9 @@ impl InspectorPanel {
         );
     }
 
-    fn animated_ground_palette_index(
-        ground_animation_table: Option<&GroundAnimationTable>,
-        atlas_index: u32,
-        animation_time_seconds: f64,
-    ) -> u32 {
-        ground_animation_table
-            .map(|table| {
-                table.animated_tile_id(
-                    atlas_index.min(u16::MAX as u32) as u16,
-                    animation_time_seconds,
-                ) as u32
-            })
-            .unwrap_or(atlas_index)
-    }
-
-    fn animated_ground_preview_tile_id(
-        ground_animation_table: Option<&GroundAnimationTable>,
-        tile_id: u16,
-        animation_time_seconds: f64,
-    ) -> u16 {
-        let Some(raw_tile_id) = tile_id.checked_sub(1) else {
-            return tile_id;
-        };
-
-        ground_animation_table
-            .map(|table| {
-                table
-                    .animated_tile_id(raw_tile_id, animation_time_seconds)
-                    .saturating_add(1)
-            })
-            .unwrap_or(tile_id)
-    }
-
     fn representative_ground_palette_tile_id(
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
+        atlas: &render::TileAtlas,
         tile_id: u16,
     ) -> u16 {
         if tile_id == 0 {
@@ -956,45 +923,30 @@ impl InspectorPanel {
         }
 
         ground_animation_table
-            .map(|table| table.representative_tile_id(tile_id - 1).saturating_add(1))
+            .map(|table| {
+                let available = |id| u32::from(id) < atlas.tile_count().min(u32::from(u16::MAX));
+                table.representative_tile_id(tile_id - 1, available) + 1
+            })
             .unwrap_or(tile_id)
     }
 
-    fn animated_wall_palette_id(
-        wall_animation_table: Option<&GroundAnimationTable>,
-        wall_id: u32,
-        animation_time_seconds: f64,
-    ) -> u32 {
-        wall_animation_table
-            .map(|table| {
-                table.animated_tile_id(wall_id.min(u16::MAX as u32) as u16, animation_time_seconds)
-                    as u32
-            })
-            .unwrap_or(wall_id)
-    }
-
-    fn animated_wall_preview_tile_id(
-        wall_animation_table: Option<&GroundAnimationTable>,
-        wall_id: u16,
-        animation_time_seconds: f64,
-    ) -> u16 {
-        wall_animation_table
-            .map(|table| table.animated_tile_id(wall_id, animation_time_seconds))
-            .unwrap_or(wall_id)
-    }
-
     fn representative_wall_palette_tile_id(
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
+        atlas: &render::SpriteAtlas,
         tile_id: u16,
     ) -> u16 {
         wall_animation_table
-            .map(|table| table.representative_tile_id(tile_id))
+            .map(|table| {
+                table.representative_tile_id(tile_id, |id| {
+                    id != 0 && atlas.sprite_height(u32::from(id)) > 0
+                })
+            })
             .unwrap_or(tile_id)
     }
 
     fn wall_animation_frame_bounds(
         atlas: &render::SpriteAtlas,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_id: u32,
     ) -> Option<(u32, u32)> {
         let mut max_width = 0;
@@ -1023,7 +975,7 @@ impl InspectorPanel {
         atlas: &render::TileAtlas,
         texture: &egui::TextureHandle,
         atlas_index: u32,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         animation_time_seconds: f64,
         cell_size: egui::Vec2,
         selected_ground_tile: &mut u16,
@@ -1031,11 +983,13 @@ impl InspectorPanel {
         let tile_id = (atlas_index + 1).min(u16::MAX as u32) as u16;
         let is_selected = Self::representative_ground_palette_tile_id(
             ground_animation_table,
+            atlas,
             *selected_ground_tile,
         ) == tile_id;
         let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
-        let animated_atlas_index = Self::animated_ground_palette_index(
+        let animated_atlas_index = ground_index(
             ground_animation_table,
+            atlas,
             atlas_index,
             animation_time_seconds,
         );
@@ -1089,18 +1043,28 @@ impl InspectorPanel {
         atlas: &render::SpriteAtlas,
         texture: &egui::TextureHandle,
         wall_id: u32,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         animation_time_seconds: f64,
         cell_size: egui::Vec2,
         selected_wall_tile: &mut u16,
     ) {
-        let is_selected =
-            Self::representative_wall_palette_tile_id(wall_animation_table, *selected_wall_tile)
-                as u32
-                == wall_id;
+        let is_selected = Self::representative_wall_palette_tile_id(
+            wall_animation_table,
+            atlas,
+            *selected_wall_tile,
+        ) as u32
+            == wall_id;
         let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
-        let animated_wall_id =
-            Self::animated_wall_palette_id(wall_animation_table, wall_id, animation_time_seconds);
+        let animated_wall_id = u16::try_from(wall_id)
+            .map(|id| {
+                u32::from(wall_tile(
+                    wall_animation_table,
+                    atlas,
+                    id,
+                    animation_time_seconds,
+                ))
+            })
+            .unwrap_or(wall_id);
 
         if let (Some((u0, v0, u1, v1)), Some((_, _, sw, sh)), Some((max_sw, max_sh))) = (
             atlas.sprite_uv(animated_wall_id),
@@ -1374,7 +1338,7 @@ impl InspectorPanel {
         map: &map::Map,
         bounds: OccupiedBounds,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
     ) -> Option<RenderBounds> {
         let half_w = map::TILE_WIDTH * 0.5;
         let half_h = map::TILE_HEIGHT * 0.5;
@@ -1451,10 +1415,10 @@ impl InspectorPanel {
         scale: f32,
         offset: egui::Vec2,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         tile_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
         animation_time_seconds: f64,
     ) {
@@ -1481,8 +1445,9 @@ impl InspectorPanel {
 
                 if tile.ground != 0 {
                     if let (Some(atlas), Some(texture)) = (tile_atlas, tile_texture) {
-                        let animated_ground_id = Self::animated_ground_preview_tile_id(
+                        let animated_ground_id = ground_tile(
                             ground_animation_table,
+                            atlas,
                             tile.ground,
                             animation_time_seconds,
                         );
@@ -1506,8 +1471,9 @@ impl InspectorPanel {
 
                 if Self::is_rendered_wall(tile.left_wall) {
                     if let (Some(atlas), Some(texture)) = (wall_atlas, wall_texture) {
-                        let wall_id = Self::animated_wall_preview_tile_id(
+                        let wall_id = wall_tile(
                             wall_animation_table,
+                            atlas,
                             tile.left_wall,
                             animation_time_seconds,
                         ) as u32;
@@ -1532,8 +1498,9 @@ impl InspectorPanel {
 
                 if Self::is_rendered_wall(tile.right_wall) {
                     if let (Some(atlas), Some(texture)) = (wall_atlas, wall_texture) {
-                        let wall_id = Self::animated_wall_preview_tile_id(
+                        let wall_id = wall_tile(
                             wall_animation_table,
+                            atlas,
                             tile.right_wall,
                             animation_time_seconds,
                         ) as u32;
@@ -1599,9 +1566,7 @@ impl InspectorPanel {
                     );
                     ui.add(
                         egui::TextEdit::singleline(prefab_search)
-                            .hint_text(
-                                egui::RichText::new("Search prefabs...").color(colors.muted),
-                            )
+                            .hint_text(egui::RichText::new("Search prefabs...").color(colors.muted))
                             .desired_width(f32::INFINITY)
                             .margin(egui::Margin::symmetric(8, 6))
                             .frame(false),
@@ -1635,12 +1600,7 @@ impl InspectorPanel {
                 }
 
                 if filtered.is_empty() {
-                    Self::draw_prefab_empty_state(
-                        ui,
-                        colors,
-                        body_height,
-                        "No prefabs found",
-                    );
+                    Self::draw_prefab_empty_state(ui, colors, body_height, "No prefabs found");
                     return;
                 }
 
@@ -1902,10 +1862,10 @@ impl InspectorPanel {
         ui: &mut egui::Ui,
         colors: &ThemeColors,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         atlas_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
         prefabs: &[PrefabAsset],
         selected_prefab_index: Option<usize>,
@@ -1935,10 +1895,10 @@ impl InspectorPanel {
         colors: &ThemeColors,
         prefab: &PrefabAsset,
         tile_atlas: Option<&render::TileAtlas>,
-        ground_animation_table: Option<&GroundAnimationTable>,
+        ground_animation_table: Option<&TileAnimationTable>,
         atlas_texture: Option<&egui::TextureHandle>,
         wall_atlas: Option<&render::SpriteAtlas>,
-        wall_animation_table: Option<&GroundAnimationTable>,
+        wall_animation_table: Option<&TileAnimationTable>,
         wall_texture: Option<&egui::TextureHandle>,
     ) {
         let preview_size = egui::vec2(ui.available_width(), ui.available_height().max(1.0));

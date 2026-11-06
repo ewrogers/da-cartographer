@@ -1,6 +1,7 @@
 use eframe::egui;
 
-use crate::theme::{ThemeColors, draw_grid_icon, theme_colors};
+use crate::APP_TITLE;
+use crate::theme::{ThemeColors, theme_colors};
 use crate::widgets::{TitleBarIcon, title_bar_icon_button};
 
 const TITLE_BAR_HEIGHT: f32 = 36.0;
@@ -8,7 +9,7 @@ const TITLE_BAR_HEIGHT: f32 = 36.0;
 pub struct TitleBarPanel;
 
 impl TitleBarPanel {
-    pub fn show(ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    pub fn show(ctx: &egui::Context, icon: Option<&egui::TextureHandle>) {
         let colors = theme_colors();
 
         egui::TopBottomPanel::top("title_bar")
@@ -19,11 +20,11 @@ impl TitleBarPanel {
                     .inner_margin(egui::Margin::ZERO),
             )
             .show(ctx, |ui| {
-                Self::draw(ui, &colors);
+                Self::draw(ui, &colors, icon);
             });
     }
 
-    fn draw(ui: &mut egui::Ui, colors: &ThemeColors) {
+    fn draw(ui: &mut egui::Ui, colors: &ThemeColors, icon: Option<&egui::TextureHandle>) {
         let rect = ui.max_rect();
 
         // Bottom border (paint before layout so it doesn't conflict)
@@ -42,13 +43,17 @@ impl TitleBarPanel {
             egui::pos2(icon_left + icon_size / 2.0, rect.center().y),
             egui::vec2(icon_size, icon_size),
         );
-        draw_grid_icon(ui.painter(), icon_rect, colors);
+        if let Some(icon) = icon {
+            let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+            ui.painter()
+                .image(icon.id(), icon_rect, uv, egui::Color32::WHITE);
+        }
 
         let text_left = icon_rect.right() + 12.0;
         ui.painter().text(
             egui::pos2(text_left, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            "Shadows Map Editor",
+            APP_TITLE,
             egui::FontId::proportional(14.0),
             colors.muted,
         );

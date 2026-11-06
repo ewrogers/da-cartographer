@@ -3,7 +3,10 @@ use std::{
     fs,
     path::Path,
     path::PathBuf,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, TryRecvError},
+    },
     time::Duration,
 };
 
@@ -11,6 +14,8 @@ use eframe::egui;
 use tracing::{info, warn};
 
 mod selection;
+#[cfg(test)]
+mod tests;
 
 use self::selection::{SelectionClipboard, SelectionDragMode};
 use crate::document::{
@@ -22,15 +27,15 @@ use crate::panels::{
     AssetSetupDialog, AssetSetupDialogAction, ExportDialog, ExportDialogAction, EyedropperPick,
     InspectorPanel, InspectorResponse, MapSizeDialog, PrefabCreateDialog, PrefabCreateDialogAction,
     PrefabDeleteDialog, PrefabDeleteDialogAction, SelectionMovePreview, StatusBarAction,
-    StatusBarPanel, TabBarAction, TabBarPanel, TitleBarPanel, Tool, ToolbarAction, ToolbarPanel,
-    UnsavedChangesDialog, UnsavedChangesDialogAction, ViewportPanel, WindowFrame,
+    StatusBarPanel, TabBarAction, TabBarPanel, TabMapExport, TitleBarPanel, Tool, ToolbarAction,
+    ToolbarPanel, UnsavedChangesDialog, UnsavedChangesDialogAction, ViewportPanel, WindowFrame,
 };
 use crate::prefab::{self, PrefabAsset};
 use crate::shape::{self, ShapeKind};
 use crate::theme;
-use crate::tile_animation::GroundAnimationTable;
+use crate::tile_animation::TileAnimationTable;
 
-const SELECTION_CLIPBOARD_SENTINEL: &str = "__shadows_map_editor_selection__";
+const SELECTION_CLIPBOARD_SENTINEL: &str = "__cartographer_selection__";
 
 enum PendingDiscardAction {
     CloseTab { index: usize },
@@ -59,8 +64,8 @@ struct LoadedAssets {
     tile_atlas: Option<render::TileAtlas>,
     wall_atlas: Option<render::SpriteAtlas>,
     sotp_data: Option<Vec<u8>>,
-    ground_animation_table: Option<GroundAnimationTable>,
-    wall_animation_table: Option<GroundAnimationTable>,
+    ground_animation_table: Option<TileAnimationTable>,
+    wall_animation_table: Option<TileAnimationTable>,
 }
 
 enum AssetImportProgressEvent {
@@ -106,6 +111,11 @@ enum AtlasBuildResult {
     Wall(Option<render::SpriteAtlas>),
 }
 
+struct ExportTask {
+    filename: String,
+    receiver: Receiver<Result<(), String>>,
+}
+
 const ASSET_LOAD_STAGE_COUNT: usize = 5;
 const ASSET_SETUP_PROMPT_STATUS: &str = "Assets not found, asking user to setup";
 
@@ -116,19 +126,20 @@ pub struct EditorApp {
     active_shape_kind: ShapeKind,
     active_paint_layer: PaintLayer,
     last_wall_paint_layer: PaintLayer,
+    title_icon: Option<egui::TextureHandle>,
     tab_bar: TabBarPanel,
     status_bar: StatusBarPanel,
     layer_visibility: LayerVisibility,
     show_grid: bool,
     show_collision_overlay: bool,
-    tile_atlas: Option<render::TileAtlas>,
+    tile_atlas: Option<Arc<render::TileAtlas>>,
     atlas_texture: Option<egui::TextureHandle>,
-    wall_atlas: Option<render::SpriteAtlas>,
+    wall_atlas: Option<Arc<render::SpriteAtlas>>,
     wall_texture: Option<egui::TextureHandle>,
     tab_overlay_texture: Option<egui::TextureHandle>,
     sotp_data: Option<Vec<u8>>,
-    ground_animation_table: Option<GroundAnimationTable>,
-    wall_animation_table: Option<GroundAnimationTable>,
+    ground_animation_table: Option<TileAnimationTable>,
+    wall_animation_table: Option<TileAnimationTable>,
     map_list: Option<MapList>,
     prefab_assets: Vec<PrefabAsset>,
     selected_prefab: Option<usize>,
@@ -146,6 +157,7 @@ pub struct EditorApp {
     line_tool_start_tile: Option<(u16, u16)>,
     shape_tool_start_tile: Option<(u16, u16)>,
     export_dialog: ExportDialog,
+    export_task: Option<ExportTask>,
     new_map_size_dialog: MapSizeDialog,
     pending_new_document_kind: DocumentKind,
     asset_setup_dialog: AssetSetupDialog,
@@ -168,12 +180,27 @@ pub struct EditorApp {
 }
 
 impl EditorApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        icon: Option<&egui::IconData>,
+        bundled_maps: Option<&Path>,
+    ) -> Self {
         crate::widgets::icons::install_font(&cc.egui_ctx);
         theme::apply_theme(&cc.egui_ctx);
+        let title_icon = icon.map(|icon| {
+            cc.egui_ctx.load_texture(
+                "app_icon",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [icon.width as usize, icon.height as usize],
+                    &icon.rgba,
+                ),
+                egui::TextureOptions::LINEAR,
+            )
+        });
 
         let needs_asset_setup = Self::assets_dir_missing_or_empty();
-        let map_list = MapList::load_if_exists("maps.ron");
+        let map_list = MapList::load_if_exists("maps.ron")
+            .or_else(|| bundled_maps.and_then(MapList::load_if_exists));
         let prefab_assets = prefab::load_prefab_assets().unwrap_or_default();
         let selected_prefab = (!prefab_assets.is_empty()).then_some(0);
         let mut app = Self {
@@ -183,6 +210,7 @@ impl EditorApp {
             active_shape_kind: ShapeKind::Rect,
             active_paint_layer: PaintLayer::Ground,
             last_wall_paint_layer: PaintLayer::LeftWall,
+            title_icon,
             tab_bar: TabBarPanel::default(),
             status_bar: StatusBarPanel::default(),
             layer_visibility: LayerVisibility::default(),
@@ -215,6 +243,7 @@ impl EditorApp {
             line_tool_start_tile: None,
             shape_tool_start_tile: None,
             export_dialog: ExportDialog::default(),
+            export_task: None,
             new_map_size_dialog: MapSizeDialog::default(),
             pending_new_document_kind: DocumentKind::Map,
             asset_setup_dialog: {
@@ -351,18 +380,6 @@ impl EditorApp {
         }
     }
 
-    fn get_pool_asset_case_insensitive<'a>(
-        pool: &'a archive::AssetPool,
-        name: &str,
-    ) -> Option<&'a [u8]> {
-        pool.get(name).or_else(|| {
-            let actual_name = pool
-                .names()
-                .find(|entry| entry.eq_ignore_ascii_case(name))?;
-            pool.get(actual_name)
-        })
-    }
-
     fn is_dat_file(path: &Path) -> bool {
         path.is_file()
             && path
@@ -412,7 +429,7 @@ impl EditorApp {
             1,
             ASSET_LOAD_STAGE_COUNT,
         );
-        let legacy_palette = match Self::get_pool_asset_case_insensitive(&pool, "legend.pal") {
+        let legacy_palette = match pool.get("legend.pal") {
             Some(data) => match render::Palette::from_bytes(data) {
                 Ok(p) => Some(p),
                 Err(e) => {
@@ -443,29 +460,27 @@ impl EditorApp {
             );
         }
 
-        let ground_animation_table =
-            match Self::get_pool_asset_case_insensitive(&pool, "gndani.tbl") {
-                Some(data) => match GroundAnimationTable::from_gndani_bytes(data) {
-                    Ok(table) => {
-                        info!(
-                            "Loaded gndani.tbl ({} animated ground sequences)",
-                            table.entry_count()
-                        );
-                        Some(table)
-                    }
-                    Err(error) => {
-                        warn!("Failed to parse gndani.tbl: {}", error);
-                        None
-                    }
-                },
-                None => {
-                    info!("gndani.tbl not found in asset archives");
+        let ground_animation_table = match pool.get("gndani.tbl") {
+            Some(data) => match TileAnimationTable::from_tbl_bytes(data) {
+                Ok(table) => {
+                    info!(
+                        "Loaded gndani.tbl ({} animated ground sequences)",
+                        table.entry_count()
+                    );
+                    Some(table)
+                }
+                Err(error) => {
+                    warn!("Failed to parse gndani.tbl: {}", error);
                     None
                 }
-            };
-        let wall_animation_table = match Self::get_pool_asset_case_insensitive(&pool, "stcani.tbl")
-        {
-            Some(data) => match GroundAnimationTable::from_tbl_bytes(data) {
+            },
+            None => {
+                info!("gndani.tbl not found in asset archives");
+                None
+            }
+        };
+        let wall_animation_table = match pool.get("stcani.tbl") {
+            Some(data) => match TileAnimationTable::from_tbl_bytes(data) {
                 Ok(table) => {
                     info!(
                         "Loaded stcani.tbl ({} animated wall sequences)",
@@ -550,7 +565,7 @@ impl EditorApp {
             4,
             ASSET_LOAD_STAGE_COUNT,
         );
-        let sotp_data = Self::get_pool_asset_case_insensitive(&pool, "SOTP.DAT").map(|data| {
+        let sotp_data = pool.get("SOTP.DAT").map(|data| {
             info!("Loaded SOTP.DAT ({} bytes)", data.len());
             data.to_vec()
         });
@@ -572,7 +587,7 @@ impl EditorApp {
         legacy_palette: Option<&render::Palette>,
         ground_palette_lookup: Option<&LoadedPaletteLookup>,
     ) -> Option<render::TileAtlas> {
-        match Self::get_pool_asset_case_insensitive(pool, "TILEA.BMP") {
+        match pool.get("TILEA.BMP") {
             Some(tile_data) => {
                 let atlas_result = if let Some(lookup) = ground_palette_lookup {
                     match legacy_palette.or_else(|| lookup.fallback_palette()) {
@@ -669,8 +684,8 @@ impl EditorApp {
     fn apply_loaded_assets(&mut self, assets: LoadedAssets) {
         self.atlas_needs_upload = assets.tile_atlas.is_some();
         self.wall_atlas_needs_upload = assets.wall_atlas.is_some();
-        self.tile_atlas = assets.tile_atlas;
-        self.wall_atlas = assets.wall_atlas;
+        self.tile_atlas = assets.tile_atlas.map(Arc::new);
+        self.wall_atlas = assets.wall_atlas.map(Arc::new);
         self.sotp_data = assets.sotp_data;
         self.ground_animation_table = assets.ground_animation_table;
         self.wall_animation_table = assets.wall_animation_table;
@@ -681,7 +696,7 @@ impl EditorApp {
             self.selected_ground_tile = 1;
         }
         if self.selected_wall_tile == 0 {
-            self.selected_wall_tile = Self::default_wall_tile_selection(self.wall_atlas.as_ref());
+            self.selected_wall_tile = Self::default_wall_tile_selection(self.wall_atlas.as_deref());
         }
         if self.sotp_data.is_none() {
             self.show_collision_overlay = false;
@@ -718,6 +733,94 @@ impl EditorApp {
             completed_steps: 0,
             total_steps: ASSET_LOAD_STAGE_COUNT,
         });
+    }
+
+    fn start_export(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        zoom: f32,
+        bg_color: Option<[u8; 4]>,
+        tab_map: Option<TabMapExport>,
+    ) {
+        if self.export_task.is_some() {
+            self.status_message = "An export is already running.".into();
+            return;
+        }
+        let (Some(ground), Some(walls)) = (&self.tile_atlas, &self.wall_atlas) else {
+            self.status_message = "Export failed: artwork is still unavailable.".into();
+            return;
+        };
+        let collision = self.sotp_data.clone();
+        if tab_map.is_some() && collision.is_none() {
+            self.status_message = "Export failed: collision data is unavailable.".into();
+            return;
+        }
+
+        let ground = Arc::clone(ground);
+        let walls = Arc::clone(walls);
+        let map = self.documents[self.active_tab].map.clone();
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let ctx = ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        let started = std::thread::Builder::new()
+            .name("map-export".into())
+            .spawn(move || {
+                let run = || {
+                    if let Some(options) = &tab_map {
+                        crate::export::validate_output_size(
+                            crate::export::compute_tab_map_dimensions(&map, options.zoom),
+                        )
+                        .map_err(|error| format!("Tab map export failed: {error}"))?;
+                    }
+                    crate::export::export_map_png(&path, &map, &ground, &walls, zoom, bg_color)
+                        .map_err(|error| format!("Export failed: {error}"))?;
+                    if let Some((options, collision)) = tab_map.zip(collision) {
+                        let tab_path = crate::export::tab_map_path(&path);
+                        crate::export::export_tab_map_png(
+                            &tab_path,
+                            &map,
+                            &collision,
+                            options.zoom,
+                            options.bg_color,
+                        )
+                        .map_err(|error| format!("Map exported. Tab map export failed: {error}"))?;
+                    }
+                    Ok(())
+                };
+                let _ = sender.send(run());
+                ctx.request_repaint();
+            });
+        match started {
+            Ok(_) => {
+                self.status_message = format!("Exporting {filename}...");
+                self.export_task = Some(ExportTask { filename, receiver });
+            }
+            Err(error) => self.status_message = format!("Export failed: {error}"),
+        }
+    }
+
+    fn poll_export(&mut self) {
+        let Some(task) = &self.export_task else {
+            return;
+        };
+        self.status_message = match task.receiver.try_recv() {
+            Err(TryRecvError::Empty) => return,
+            Ok(Ok(())) => {
+                info!(file = %task.filename, "Exported map");
+                format!("Exported {}.", task.filename)
+            }
+            Ok(Err(error)) => {
+                warn!(%error, "Map export failed");
+                error
+            }
+            Err(TryRecvError::Disconnected) => "Export failed: the worker stopped.".into(),
+        };
+        self.export_task = None;
     }
 
     fn open_asset_setup_prompt(&mut self) {
@@ -955,8 +1058,7 @@ impl EditorApp {
         })
     }
 
-    /// Probe for `stcNNNNN.hpf` files in the asset pool, decode them, and
-    /// pack into a single sprite atlas.
+    /// Decode every named wall sprite, retaining its numeric atlas index.
     fn load_wall_atlas<'a, F>(
         pool: &archive::AssetPool,
         mut palette_for_wall: F,
@@ -965,43 +1067,33 @@ impl EditorApp {
         F: FnMut(u32) -> &'a render::Palette,
     {
         let mut sprites: Vec<Option<render::HpfSprite>> = Vec::new();
-        let mut last_found = 0u32;
-        let mut found_count = 0u32;
+        let mut found_count = 0;
 
-        // Wall IDs are 1-indexed: tile wall_id=741 maps to stc00741.hpf.
-        // We load starting from 0 to fill the array; index 0 is unused.
-        for id in 0..=99_999u32 {
-            // Try lowercase first, then uppercase (archive names may vary)
-            let name_lower = format!("stc{:05}.hpf", id);
-            let name_upper = format!("STC{:05}.HPF", id);
-            let data = pool.get(&name_lower).or_else(|| pool.get(&name_upper));
-
-            match data {
-                Some(bytes) => match render::HpfSprite::decode(bytes) {
-                    Ok(sprite) => {
-                        while sprites.len() <= id as usize {
-                            sprites.push(None);
-                        }
-                        sprites[id as usize] = Some(sprite);
-                        last_found = id;
-                        found_count += 1;
+        for name in pool.names() {
+            let normalized = name.to_ascii_lowercase();
+            let Some(id) = normalized
+                .strip_prefix("stc")
+                .and_then(|name| name.strip_suffix(".hpf"))
+                .filter(|digits| {
+                    digits.len() == 5 && digits.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .and_then(|digits| digits.parse::<u16>().ok())
+                .map(usize::from)
+            else {
+                continue;
+            };
+            let Some(data) = pool.get(name) else {
+                continue;
+            };
+            match render::HpfSprite::decode(data) {
+                Ok(sprite) => {
+                    if sprites.len() <= id {
+                        sprites.resize_with(id + 1, || None);
                     }
-                    Err(e) => {
-                        warn!("Failed to decode {}: {}", name_lower, e);
-                        while sprites.len() <= id as usize {
-                            sprites.push(None);
-                        }
-                    }
-                },
-                None => {
-                    // Allow gaps, but stop after 100 consecutive misses past last found
-                    if id > last_found + 100 && found_count > 0 {
-                        break;
-                    }
-                    while sprites.len() <= id as usize {
-                        sprites.push(None);
-                    }
+                    sprites[id] = Some(sprite);
+                    found_count += 1;
                 }
+                Err(error) => warn!(%name, %error, "Failed to decode wall sprite"),
             }
         }
 
@@ -1009,7 +1101,6 @@ impl EditorApp {
             warn!("No HPF wall sprites found in asset archives");
             return None;
         }
-
         match render::SpriteAtlas::build_with_sprite_palette(&sprites, 28, |wall_id| {
             palette_for_wall(wall_id)
         }) {
@@ -1135,6 +1226,10 @@ impl EditorApp {
     }
 
     fn create_document_with_dimensions(&mut self, width: u16, height: u16) {
+        if let Err(error) = map::validate_dimensions(width, height) {
+            self.status_message = error.to_string();
+            return;
+        }
         if width == 0 || height == 0 {
             self.status_message = "Width and height must both be at least 1.".to_string();
             return;
@@ -1521,7 +1616,7 @@ impl EditorApp {
             if !Self::paths_match(doc_path, path) {
                 continue;
             }
-            if doc.dirty {
+            if doc.is_dirty() {
                 return Err(format!(
                     "Close or save open prefab tabs for {} before deleting it.",
                     name
@@ -1549,7 +1644,7 @@ impl EditorApp {
             let Some(doc_path) = doc.path.as_ref() else {
                 continue;
             };
-            if Self::paths_match(doc_path, &prefab.path) && doc.dirty {
+            if Self::paths_match(doc_path, &prefab.path) && doc.is_dirty() {
                 return Err(format!(
                     "Save open prefab tabs for {} before duplicating it.",
                     prefab.file_stem_name()
@@ -1671,7 +1766,6 @@ impl EditorApp {
         let kind = self.documents[index].kind();
         match self.documents[index].save_as(path.clone()) {
             Ok(()) => {
-                self.documents[index].clear_history();
                 if kind == DocumentKind::Prefab {
                     self.reload_prefabs();
                     self.select_prefab_by_path(&path);
@@ -1764,7 +1858,7 @@ impl EditorApp {
             return;
         }
         self.documents[index].finish_stroke();
-        if self.documents[index].dirty {
+        if self.documents[index].is_dirty() {
             self.begin_unsaved_changes_flow(PendingDiscardAction::CloseTab { index }, index);
             return;
         }
@@ -1806,14 +1900,14 @@ impl EditorApp {
         self.documents[self.active_tab].finish_stroke();
 
         let mut dirty_docs = Vec::new();
-        if self.documents[self.active_tab].dirty {
+        if self.documents[self.active_tab].is_dirty() {
             dirty_docs.push(self.active_tab);
         }
         dirty_docs.extend(
             self.documents
                 .iter()
                 .enumerate()
-                .filter(|(index, doc)| *index != self.active_tab && doc.dirty)
+                .filter(|(index, doc)| *index != self.active_tab && doc.is_dirty())
                 .map(|(index, _)| index),
         );
         dirty_docs
@@ -2345,9 +2439,10 @@ impl eframe::App for EditorApp {
         [0.043, 0.047, 0.055, 1.0] // matches bg (#0b0c0e)
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_asset_import_progress(ctx);
         self.poll_asset_load_progress(ctx);
+        self.poll_export();
 
         let animation_interval_ms = self
             .ground_animation_table
@@ -2391,7 +2486,7 @@ impl eframe::App for EditorApp {
             self.handle_dropped_files(ctx);
         }
 
-        TitleBarPanel::show(ctx, frame);
+        TitleBarPanel::show(ctx, self.title_icon.as_ref());
 
         let tab_action = self.tab_bar.show(ctx, &self.documents, self.active_tab);
         match tab_action {
@@ -2418,7 +2513,11 @@ impl eframe::App for EditorApp {
                 .and_then(|n| n.to_str())
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| doc.display_name());
-            if doc.dirty { format!("{base} *") } else { base }
+            if doc.is_dirty() {
+                format!("{base} *")
+            } else {
+                base
+            }
         };
         let alt_held = ctx.input(|i| i.modifiers.alt);
         let effective_tool = if alt_held {
@@ -2540,68 +2639,17 @@ impl eframe::App for EditorApp {
         let prefab_delete_action = self.prefab_delete_dialog.show(ctx);
         self.resolve_prefab_delete_action(prefab_delete_action);
 
-        // Export dialog
-        {
-            let doc = &self.documents[self.active_tab];
-            let export_action = self
-                .export_dialog
-                .show(ctx, &doc.map, self.wall_atlas.as_ref());
-            match export_action {
-                ExportDialogAction::Export {
-                    path,
-                    zoom,
-                    bg_color,
-                    tab_map,
-                } => {
-                    let filename = path
-                        .file_name()
-                        .and_then(|f| f.to_str())
-                        .unwrap_or("file")
-                        .to_owned();
-                    self.status_message = format!("Exporting {}...", filename);
-
-                    let mut ok = false;
-                    if let (Some(ta), Some(wa)) = (&self.tile_atlas, &self.wall_atlas) {
-                        if let Err(e) =
-                            crate::export::export_map_png(&path, &doc.map, ta, wa, zoom, bg_color)
-                        {
-                            warn!("Export failed: {}", e);
-                            self.status_message = format!("Export failed: {}", e);
-                        } else {
-                            info!("Exported to {}", path.display());
-                            ok = true;
-                        }
-                    } else {
-                        warn!("Cannot export: atlases not loaded");
-                        self.status_message = "Export failed: atlases not loaded".into();
-                    }
-                    // Export tab map alongside if enabled
-                    if let Some(tm) = tab_map {
-                        if let Some(sotp) = &self.sotp_data {
-                            let tm_path = crate::export::tab_map_path(&path);
-                            if let Err(e) = crate::export::export_tab_map_png(
-                                &tm_path,
-                                &doc.map,
-                                sotp,
-                                tm.zoom,
-                                tm.bg_color,
-                            ) {
-                                warn!("Tab map export failed: {}", e);
-                                self.status_message = format!("Tab map export failed: {}", e);
-                                ok = false;
-                            } else {
-                                info!("Exported tab map to {}", tm_path.display());
-                            }
-                        } else {
-                            warn!("Cannot export tab map: SOTP data not loaded");
-                        }
-                    }
-                    if ok {
-                        self.status_message = format!("Exported {}.", filename);
-                    }
-                }
-                ExportDialogAction::None => {}
-            }
+        if let ExportDialogAction::Export {
+            path,
+            zoom,
+            bg_color,
+            tab_map,
+        } = self.export_dialog.show(
+            ctx,
+            &self.documents[self.active_tab].map,
+            self.wall_atlas.as_deref(),
+        ) {
+            self.start_export(ctx, path, zoom, bg_color, tab_map);
         }
 
         // Inspector: tile palette + tab map
@@ -2613,10 +2661,10 @@ impl eframe::App for EditorApp {
                 ctx,
                 &doc.map,
                 self.sotp_data.as_deref(),
-                self.tile_atlas.as_ref(),
+                self.tile_atlas.as_deref(),
                 self.ground_animation_table.as_ref(),
                 self.atlas_texture.as_ref(),
-                self.wall_atlas.as_ref(),
+                self.wall_atlas.as_deref(),
                 self.wall_animation_table.as_ref(),
                 self.wall_texture.as_ref(),
                 &mut requested,
@@ -2730,11 +2778,11 @@ impl eframe::App for EditorApp {
                 self.paste_preview_active.then_some(self.hover_tile),
                 self.selection_clipboard.is_some(),
                 stamp_prefab.as_ref(),
-                self.tile_atlas.as_ref(),
+                self.tile_atlas.as_deref(),
                 self.ground_animation_table.as_ref(),
                 self.wall_animation_table.as_ref(),
                 self.atlas_texture.as_ref(),
-                self.wall_atlas.as_ref(),
+                self.wall_atlas.as_deref(),
                 self.wall_texture.as_ref(),
                 self.tab_overlay_texture.as_ref(),
                 ctx.input(|i| i.time),

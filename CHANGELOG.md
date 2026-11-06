@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- Renamed the editor to DA Cartographer and the executable to `cartographer`.
+- Updated the colors and added a full-bleed slate icon with an outlined teal octagram
+  for Windows, macOS, and Linux.
+- Added a macOS app bundle and a Linux application-menu installer.
+- Simplified the setup instructions and moved editing tips to the editor guide.
+- Kept undo and redo available after saving and made map and prefab saves atomic.
+- Loaded sparse wall sprite banks and fixed animation frames and palette lookup.
+- Limited oversized maps and image exports, moved PNG encoding to a worker,
+  and reduced viewport work outside the visible area.
+
 ## [0.6.0] - 2026-03-07
 
 ### Added
@@ -20,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Prefab inspector polish: the preview edit button now uses a hoverable pencil icon control, and the prefab search box now has a padded inline search icon and clearer empty-state copy.
 
 ### Fixed
-- Ground animation lookup now matches the Chaos asset ID space instead of skipping valid animated tiles.
+- Fixed ground animation for valid tiles in newer asset packs.
 - Wall animation preview sizing no longer jitters in the palette or prefab preview when frames have different heights.
 - Fast selection drag start is more responsive because the drag origin is latched from the initial mouse-down tile.
 

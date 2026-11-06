@@ -1,25 +1,25 @@
 [package]
-name = "editor"
+name = "cartographer"
+default-run = "cartographer"
 edition.workspace = true
 version.workspace = true
 
-[[bin]]
-name = "map-editor"
-path = "src/main.rs"
-
 [dependencies]
 archive = { path = "../archive" }
-map = { path = "../map" }
-render = { path = "../render" }
 eframe = "0.33"
+map = { path = "../map" }
 png = "0.18"
+render = { path = "../render" }
 rfd = "0.15"
+ron = "0.11"
+serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-serde = { version = "1.0", features = ["derive"] }
-ron = "0.11"
 
 [build-dependencies]
 ico = "0.5"
 image = { version = "0.25", default-features = false, features = ["png"] }
 winresource = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

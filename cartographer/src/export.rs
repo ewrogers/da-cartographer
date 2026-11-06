@@ -1,6 +1,36 @@
 use std::io;
 use std::path::Path;
 
+const MAX_EXPORT_BYTES: usize = 256 * 1024 * 1024;
+
+pub(crate) fn validate_output_size((width, height): (u32, u32)) -> io::Result<usize> {
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .filter(|&bytes| bytes > 0 && bytes <= MAX_EXPORT_BYTES);
+    bytes.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{width}x{height} exceeds the 256 MiB export limit. Choose a smaller scale."),
+        )
+    })
+}
+
+fn export_buffer(map: &map::Map, zoom: f32, dimensions: (u32, u32)) -> io::Result<Vec<u8>> {
+    let tiles = map::validate_dimensions(map.width, map.height)?;
+    if tiles != map.tiles.len() || !zoom.is_finite() || zoom <= 0.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid map or export scale",
+        ));
+    }
+    let bytes = validate_output_size(dimensions)?;
+    let mut buffer = Vec::new();
+    buffer.try_reserve_exact(bytes).map_err(io::Error::other)?;
+    buffer.resize(bytes, 0);
+    Ok(buffer)
+}
+
 /// Returns true if a wall tile ID should be rendered.
 fn is_rendered_wall(id: u16) -> bool {
     if id == 0 {
@@ -45,7 +75,7 @@ pub fn compute_output_dimensions(
         .unwrap_or(0);
     let tile_h = map::TILE_HEIGHT * zoom;
     let wall_headroom = ((max_wall_px as f32 * zoom) - tile_h).max(0.0).ceil() as u32;
-    let img_h = base_h + wall_headroom;
+    let img_h = base_h.saturating_add(wall_headroom);
     (img_w.max(1), img_h.max(1))
 }
 
@@ -62,7 +92,7 @@ pub fn export_map_png(
     bg_color: Option<[u8; 4]>,
 ) -> io::Result<()> {
     let (out_w, out_h) = compute_output_dimensions(map, zoom, Some(wall_atlas));
-    let mut buffer = vec![0u8; out_w as usize * out_h as usize * 4];
+    let mut buffer = export_buffer(map, zoom, (out_w, out_h))?;
 
     // Fill background if specified
     if let Some(bg) = bg_color {
@@ -332,7 +362,7 @@ pub fn export_tab_map_png(
     bg_color: Option<[u8; 4]>,
 ) -> io::Result<()> {
     let (out_w, out_h) = compute_tab_map_dimensions(map, zoom);
-    let mut buffer = vec![0u8; out_w as usize * out_h as usize * 4];
+    let mut buffer = export_buffer(map, zoom, (out_w, out_h))?;
 
     // Fill background if specified
     if let Some(bg) = bg_color {
@@ -585,16 +615,42 @@ fn draw_line(
 
 /// Write an RGBA buffer as a PNG file.
 fn write_png(path: &Path, rgba: &[u8], width: u32, height: u32) -> io::Result<()> {
-    let file = std::fs::File::create(path)?;
-    let w = io::BufWriter::new(file);
-    let mut encoder = png::Encoder::new(w, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    writer
-        .write_image_data(rgba)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    Ok(())
+    map::write_atomic(path, |file| {
+        let mut encoder = png::Encoder::new(io::BufWriter::new(file), width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(io::Error::other)?;
+        writer.write_image_data(rgba).map_err(io::Error::other)?;
+        writer.finish().map_err(io::Error::other)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_export_is_rejected_before_creating_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("export.png");
+        let map = map::Map::new(133, 200);
+        let palette = render::Palette::from_bytes(&[33; 768]).unwrap();
+        let ground = render::TileAtlas::from_raw(&[1; 56 * 27], &palette, 56, 27).unwrap();
+        let sprite = render::HpfSprite {
+            width: 28,
+            height: 1,
+            pixels: vec![1; 28],
+        };
+        let walls = render::SpriteAtlas::build(&[Some(sprite)], &palette, 28).unwrap();
+
+        assert_eq!(
+            export_map_png(&path, &map, &ground, &walls, 4.0, None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert!(!path.exists());
+        export_map_png(&path, &map::Map::new(1, 1), &ground, &walls, 1.0, None).unwrap();
+        assert!(std::fs::read(path).unwrap().starts_with(b"\x89PNG"));
+    }
 }

@@ -30,7 +30,11 @@ impl AssetPool {
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("dat") {
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dat"))
+                    && path.is_file()
+                {
                     Some(path)
                 } else {
                     None
@@ -50,7 +54,7 @@ impl AssetPool {
             for (entry_idx, entry) in archive.entries().iter().enumerate() {
                 // Later archives (alphabetically) overwrite earlier ones
                 index.insert(
-                    entry.name.clone(),
+                    entry.name.to_ascii_lowercase(),
                     AssetRef {
                         archive: archive_idx,
                         entry: entry_idx,
@@ -66,7 +70,7 @@ impl AssetPool {
 
     /// Returns the raw bytes of an asset by file name, or `None` if not found.
     pub fn get(&self, name: &str) -> Option<&[u8]> {
-        let asset_ref = self.index.get(name)?;
+        let asset_ref = self.index.get(&name.to_ascii_lowercase())?;
         let archive = &self.archives[asset_ref.archive];
         let entry = &archive.entries()[asset_ref.entry];
         archive.get(&entry.name)
@@ -74,7 +78,7 @@ impl AssetPool {
 
     /// Returns `true` if an asset with this name exists in any archive.
     pub fn contains(&self, name: &str) -> bool {
-        self.index.contains_key(name)
+        self.index.contains_key(&name.to_ascii_lowercase())
     }
 
     /// Total number of unique asset names across all archives.
@@ -89,7 +93,11 @@ impl AssetPool {
 
     /// Returns an iterator over all unique asset names in the pool.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.index.keys().map(|s| s.as_str())
+        self.index.values().map(|asset| {
+            self.archives[asset.archive].entries()[asset.entry]
+                .name
+                .as_str()
+        })
     }
 
     /// Number of loaded archives.

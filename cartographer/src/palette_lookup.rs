@@ -4,6 +4,8 @@ use archive::AssetPool;
 use render::Palette;
 use tracing::warn;
 
+const MAX_PALETTE_ASSET_ID: u32 = u16::MAX as u32 + 1;
+
 #[derive(Default)]
 struct PaletteTable {
     entries: HashMap<u32, u32>,
@@ -15,7 +17,7 @@ impl PaletteTable {
         let text = String::from_utf8_lossy(data);
         for line in text.lines() {
             match parse_table_line(line) {
-                Some(TableLine::Override { id, palette }) => {
+                Some(TableLine::Override { id, palette }) if id <= MAX_PALETTE_ASSET_ID => {
                     self.overrides.insert(id, palette);
                 }
                 Some(TableLine::Range {
@@ -23,11 +25,11 @@ impl PaletteTable {
                     end,
                     palette,
                 }) => {
-                    for id in start..=end {
+                    for id in start..=end.min(MAX_PALETTE_ASSET_ID) {
                         self.entries.insert(id, palette);
                     }
                 }
-                None => {}
+                _ => {}
             }
         }
     }
@@ -137,12 +139,15 @@ impl LoadedPaletteLookup {
     /// Returns `None` when no usable table/palette set is found.
     pub fn from_pool(pool: &AssetPool, prefix: &str) -> Option<Self> {
         let table_names = collect_matching_names(pool, prefix, ".tbl");
-        if table_names.is_empty() {
-            return None;
-        }
 
         let mut table = PaletteTable::default();
         for name in table_names {
+            let normalized = name.to_ascii_lowercase();
+            let stem = &normalized[prefix.len()..normalized.len() - ".tbl".len()];
+            let suffix = stem.strip_prefix("pal").unwrap_or(stem);
+            if !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
             if let Some(bytes) = pool.get(name) {
                 table.merge_from_bytes(bytes);
             }

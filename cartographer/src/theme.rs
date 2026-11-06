@@ -20,7 +20,7 @@ pub fn theme_colors() -> ThemeColors {
         panel_2: egui::Color32::from_rgb(30, 35, 40),
         text: egui::Color32::from_rgb(227, 227, 227),
         muted: egui::Color32::from_rgb(163, 167, 173),
-        accent: egui::Color32::from_rgb(224, 138, 53),
+        accent: egui::Color32::from_rgb(151, 185, 174),
         border: egui::Color32::from_rgb(44, 50, 56),
     }
 }
@@ -31,14 +31,14 @@ pub fn apply_theme(ctx: &egui::Context) {
 
     let control_bg = egui::Color32::from_rgb(10, 11, 13);
     let control_bg_hover = egui::Color32::from_rgb(12, 14, 17);
-    let scroll_thumb_idle = colors.accent.gamma_multiply(0.78);
-    let scroll_thumb_hover = colors.accent.gamma_multiply(0.92);
+    let scroll_thumb_idle = colors.muted.gamma_multiply(0.78);
+    let scroll_thumb_hover = colors.muted.gamma_multiply(0.92);
     let scroll_thumb_active = colors.accent;
 
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     style.spacing.window_margin = egui::Margin::same(12);
     style.spacing.button_padding = egui::vec2(8.0, 4.0);
-    // Shadows-themed scrollbar: solid rail, wider handle, compact margins.
+    // Solid scrollbar with a wider handle and compact margins.
     let mut scroll = egui::style::ScrollStyle::solid();
     scroll.bar_width = 8.0;
     scroll.handle_min_length = 18.0;
@@ -92,46 +92,4 @@ pub fn apply_theme(ctx: &egui::Context) {
     ctx.options_mut(|opts| {
         opts.zoom_with_keyboard = false;
     });
-}
-
-/// Draws the isometric grid icon (matching the app icon) into a given rect.
-pub fn draw_grid_icon(painter: &egui::Painter, rect: egui::Rect, colors: &ThemeColors) {
-    let size = rect.width().min(rect.height());
-    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(size, size));
-    let cx = icon_rect.center().x;
-    let cy = icon_rect.center().y;
-
-    // Isometric diamond — 2:1 width:height
-    let grid_h = size * 0.34;
-    let grid_w = grid_h * 2.0;
-
-    let top = egui::pos2(cx, cy - grid_h);
-    let right = egui::pos2(cx + grid_w, cy);
-    let bottom = egui::pos2(cx, cy + grid_h);
-    let left = egui::pos2(cx - grid_w, cy);
-
-    let outer_stroke = egui::Stroke::new(size * 0.06, colors.accent);
-    let inner_stroke = egui::Stroke::new(size * 0.035, colors.accent);
-
-    // Outer diamond
-    painter.line_segment([top, right], outer_stroke);
-    painter.line_segment([right, bottom], outer_stroke);
-    painter.line_segment([bottom, left], outer_stroke);
-    painter.line_segment([left, top], outer_stroke);
-
-    // Inner grid lines
-    for i in 1..3 {
-        let t = i as f32 / 3.0;
-        let from = lerp_pos(left, top, t);
-        let to = lerp_pos(bottom, right, t);
-        painter.line_segment([from, to], inner_stroke);
-
-        let from = lerp_pos(top, right, t);
-        let to = lerp_pos(left, bottom, t);
-        painter.line_segment([from, to], inner_stroke);
-    }
-}
-
-fn lerp_pos(a: egui::Pos2, b: egui::Pos2, t: f32) -> egui::Pos2 {
-    egui::pos2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
 }

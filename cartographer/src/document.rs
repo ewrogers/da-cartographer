@@ -244,13 +244,13 @@ pub struct MapDocument {
     kind: DocumentKind,
     pub map: map::Map,
     pub path: Option<PathBuf>,
-    pub dirty: bool,
     pub id_hint: Option<u32>,
     pub name_hint: Option<String>,
     pub camera: Camera,
     selection: Option<TileSelection>,
     undo_stack: Vec<Vec<EditChange>>,
     redo_stack: Vec<Vec<EditChange>>,
+    saved_depth: Option<usize>,
     pending_stroke: Option<PendingStroke>,
 }
 
@@ -272,13 +272,13 @@ impl MapDocument {
             kind,
             map: map::Map::new(width, height),
             path: None,
-            dirty: false,
             id_hint: None,
             name_hint: None,
             camera: Camera::default(),
             selection: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            saved_depth: Some(0),
             pending_stroke: None,
         }
     }
@@ -313,13 +313,13 @@ impl MapDocument {
             kind: DocumentKind::Map,
             map,
             path: Some(path),
-            dirty: false,
             id_hint,
             name_hint,
             camera: Camera::default(),
             selection: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            saved_depth: Some(0),
             pending_stroke: None,
         })
     }
@@ -330,13 +330,13 @@ impl MapDocument {
             kind: DocumentKind::Prefab,
             map: asset.map,
             path: Some(path),
-            dirty: false,
             id_hint: None,
             name_hint: Some(asset.name),
             camera: Camera::default(),
             selection: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            saved_depth: Some(0),
             pending_stroke: None,
         })
     }
@@ -364,7 +364,7 @@ impl MapDocument {
         }
 
         self.path = Some(path);
-        self.dirty = false;
+        self.saved_depth = Some(self.undo_stack.len());
         Ok(())
     }
 
@@ -374,16 +374,14 @@ impl MapDocument {
 
     pub fn set_dimensions(&mut self, width: u16, height: u16) -> Result<(), String> {
         self.finish_stroke();
-        if width == 0 || height == 0 {
-            return Err("Width and height must both be at least 1.".to_string());
-        }
+        let new_count =
+            map::validate_dimensions(width, height).map_err(|error| error.to_string())?;
         if width == self.map.width && height == self.map.height {
             return Ok(());
         }
 
         let old_map = self.map.clone();
         let old_count = old_map.tiles.len();
-        let new_count = width as usize * height as usize;
 
         let mut new_tiles = Vec::new();
         if let Err(err) = new_tiles.try_reserve_exact(new_count) {
@@ -418,11 +416,9 @@ impl MapDocument {
 
     pub fn resize_canvas_centered(&mut self, width: u16, height: u16) -> Result<(), String> {
         self.finish_stroke();
-        if width == 0 || height == 0 {
-            return Err("Width and height must both be at least 1.".to_string());
-        }
+        let new_count =
+            map::validate_dimensions(width, height).map_err(|error| error.to_string())?;
 
-        let new_count = width as usize * height as usize;
         let mut new_tiles = Vec::new();
         if let Err(err) = new_tiles.try_reserve_exact(new_count) {
             return Err(format!(
@@ -877,11 +873,12 @@ impl MapDocument {
         self.path = Some(path);
     }
 
-    pub fn clear_history(&mut self) {
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-        self.pending_stroke = None;
-        self.dirty = false;
+    pub fn is_dirty(&self) -> bool {
+        self.saved_depth != Some(self.undo_stack.len())
+            || self
+                .pending_stroke
+                .as_ref()
+                .is_some_and(|stroke| !stroke.original_values.is_empty())
     }
 
     pub fn can_undo(&self) -> bool {
@@ -942,7 +939,6 @@ impl MapDocument {
             PaintLayer::LeftWall => tile.left_wall = paint_value,
             PaintLayer::RightWall => tile.right_wall = paint_value,
         }
-        self.dirty = true;
         true
     }
 
@@ -983,9 +979,14 @@ impl MapDocument {
         if changes.is_empty() {
             return false;
         }
+        if self
+            .saved_depth
+            .is_some_and(|saved| saved > self.undo_stack.len())
+        {
+            self.saved_depth = None;
+        }
         self.undo_stack.push(changes);
         self.redo_stack.clear();
-        self.dirty = true;
         true
     }
 
@@ -1074,7 +1075,6 @@ impl MapDocument {
             self.camera = Camera::default();
         }
         self.redo_stack.push(batch);
-        self.dirty = !self.undo_stack.is_empty();
         true
     }
 
@@ -1096,7 +1096,6 @@ impl MapDocument {
             self.camera = Camera::default();
         }
         self.undo_stack.push(batch);
-        self.dirty = true;
         true
     }
 }
@@ -1104,6 +1103,24 @@ impl MapDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_checkpoint_survives_undo_and_divergence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("saved.map");
+        let mut doc = MapDocument::new_map(1, 1);
+        doc.set_dimensions(2, 1).unwrap();
+        doc.save_as(path.clone()).unwrap();
+
+        assert!(doc.undo());
+        assert!(doc.is_dirty());
+        assert!(doc.redo());
+        assert!(!doc.is_dirty());
+        assert!(doc.undo());
+        doc.set_dimensions(1, 2).unwrap();
+        assert!(doc.is_dirty());
+        assert_eq!(map::Map::load(&path).unwrap().width, 2);
+    }
 
     #[test]
     fn resize_grows_and_preserves_linear_prefix() {
