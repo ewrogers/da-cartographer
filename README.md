@@ -47,4 +47,4 @@ cargo run --release --locked -p cartographer
 
 The binary builds to `target/release/cartographer` or
 `target/release/cartographer.exe`. For a macOS app bundle, run
-`packaging/macos.sh target/release/cartographer target/dist 0.6.0` after building.
+`packaging/macos.sh target/release/cartographer target/dist 0.7.0` after building.

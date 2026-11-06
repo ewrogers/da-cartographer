@@ -4,24 +4,29 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-05
+
+### Added
+
+- Added a macOS app bundle with native window controls and a Linux application-menu installer.
+- Added map tab menus with Close, Close Others, and Close Tabs to the Right.
+
+### Changed
 
 - Renamed the editor to DA Cartographer and the executable to `cartographer`.
-- Updated the colors and added a full-bleed slate icon with an outlined teal octagram
-  for Windows, macOS, and Linux.
-- Added a macOS app bundle and a Linux application-menu installer.
-- Added native macOS window controls and refreshed the editor icons, including
-  the Tile Palette, collision overlay, and status bar.
-- Kept the window responsive while preparing game assets.
-- Added map tab context menus for closing a tab, other tabs, or tabs to its right.
-- Cleared stale editing previews when undoing or redoing an edit.
-- Moved CI and release packaging for macOS, Windows, and Linux on x86_64 and
-  arm64 to GitHub-hosted runners.
-- Simplified the setup instructions and moved editing tips to the editor guide.
-- Kept undo and redo available after saving and made map and prefab saves atomic.
-- Loaded sparse wall sprite banks and fixed animation frames and palette lookup.
-- Limited oversized maps and image exports, moved PNG encoding to a worker,
-  and reduced viewport work outside the visible area.
+- Updated the color palette and added a slate app icon with a teal octagram on Windows, macOS, and Linux.
+- Adopted Tabler icons across the toolbar, dialogs, Tile Palette, collision overlay, and status bar. Enlarged the map tab close buttons.
+- Moved game asset preparation and PNG export off the UI thread.
+- Reduced viewport work by culling offscreen tiles and sprites.
+- Updated compatible dependencies and simplified the setup instructions, editor guide, and README screenshot.
+- Moved CI and release packaging for macOS, Windows, and Linux on x86_64 and arm64 to GitHub-hosted runners.
+
+### Fixed
+
+- Preserved undo and redo after saving, tracked unsaved edits across undo and redo, and made map and prefab saves atomic.
+- Cleared stale selection and tool previews on undo and redo.
+- Loaded sparse wall sprite banks and corrected animation frame and palette lookup for legacy and newer asset packs.
+- Validated map dimensions and bounded map, prefab, and PNG export allocations.
 
 ## [0.6.0] - 2026-03-07
 
